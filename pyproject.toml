@@ -1,0 +1,33 @@
+[project]
+name = "ipobot"
+version = "0.1.0"
+description = "상장 예정 알림 + 주가 예측 대회 디스코드 봇"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "discord.py>=2.5,<3",
+  "anthropic",
+  "httpx",
+  "python-dateutil",
+  "holidays",
+  "pydantic>=2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "respx",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ipobot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-ra"
