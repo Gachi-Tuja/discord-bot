@@ -1,0 +1,40 @@
+{
+  "_provisional": true,
+  "_note": "SYNTHETIC provisional fixture (S0a). Shape assumed from KRX OpenAPI docs; replace with real response at CP-KRX (S0b). Halted row: ACC_TRDVOL=\"0\", TDD_OPNPRC=\"0\".",
+  "OutBlock_1": [
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "123450",
+      "ISU_NM": "정지종목",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "5,670",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "0",
+      "TDD_HGPRC": "5,670",
+      "TDD_LWPRC": "5,670",
+      "ACC_TRDVOL": "0",
+      "ACC_TRDVAL": "0",
+      "MKTCAP": "56,700,000,000",
+      "LIST_SHRS": "10,000,000"
+    },
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "247540",
+      "ISU_NM": "에코프로비엠",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "121,800",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "120,000",
+      "TDD_HGPRC": "121,800",
+      "TDD_LWPRC": "121,800",
+      "ACC_TRDVOL": "654,321",
+      "ACC_TRDVAL": "0",
+      "MKTCAP": "11,912,345,678,400",
+      "LIST_SHRS": "97,801,344"
+    }
+  ]
+}

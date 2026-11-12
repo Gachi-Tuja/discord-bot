@@ -1,0 +1,56 @@
+{
+  "_provisional": true,
+  "_note": "SYNTHETIC provisional fixture (S0a). Shape assumed from KRX OpenAPI docs; replace with real response at CP-KRX (S0b). Row1: vol>0, close>0, MKTCAP=\"-\" -> data_anomaly. Row2: MKTCAP key missing -> data_anomaly. Row3: normal.",
+  "OutBlock_1": [
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "111110",
+      "ISU_NM": "시총대시",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "12,300",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "12,100",
+      "TDD_HGPRC": "12,300",
+      "TDD_LWPRC": "12,300",
+      "ACC_TRDVOL": "98,765",
+      "ACC_TRDVAL": "0",
+      "MKTCAP": "-",
+      "LIST_SHRS": "4,000,000"
+    },
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "222220",
+      "ISU_NM": "필드결측",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "9,900",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "9,800",
+      "TDD_HGPRC": "9,900",
+      "TDD_LWPRC": "9,900",
+      "ACC_TRDVOL": "45,678",
+      "ACC_TRDVAL": "0",
+      "LIST_SHRS": "3,000,000"
+    },
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "247540",
+      "ISU_NM": "에코프로비엠",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "121,800",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "120,000",
+      "TDD_HGPRC": "121,800",
+      "TDD_LWPRC": "121,800",
+      "ACC_TRDVOL": "654,321",
+      "ACC_TRDVAL": "0",
+      "MKTCAP": "11,912,345,678,400",
+      "LIST_SHRS": "97,801,344"
+    }
+  ]
+}

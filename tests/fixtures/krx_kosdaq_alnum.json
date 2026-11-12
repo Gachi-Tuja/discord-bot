@@ -1,0 +1,57 @@
+{
+  "_provisional": true,
+  "_note": "SYNTHETIC provisional fixture (S0a). Shape assumed from KRX OpenAPI docs; replace with real response at CP-KRX (S0b).",
+  "OutBlock_1": [
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "0158S0",
+      "ISU_NM": "가치토자바이오",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "24,350",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "23,900",
+      "TDD_HGPRC": "24,350",
+      "TDD_LWPRC": "24,350",
+      "ACC_TRDVOL": "1,234,567",
+      "ACC_TRDVAL": "0",
+      "MKTCAP": "487,000,000,000",
+      "LIST_SHRS": "20,000,000"
+    },
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "247540",
+      "ISU_NM": "에코프로비엠",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "121,800",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "120,000",
+      "TDD_HGPRC": "121,800",
+      "TDD_LWPRC": "121,800",
+      "ACC_TRDVOL": "654,321",
+      "ACC_TRDVAL": "0",
+      "MKTCAP": "11,912,345,678,400",
+      "LIST_SHRS": "97,801,344"
+    },
+    {
+      "BAS_DD": "20261110",
+      "ISU_CD": "091990",
+      "ISU_NM": "셀트리온헬스케어",
+      "MKT_NM": "KOSDAQ",
+      "SECT_TP_NM": "",
+      "TDD_CLSPRC": "58,700",
+      "CMPPREVDD_PRC": "0",
+      "FLUC_RT": "0.00",
+      "TDD_OPNPRC": "58,000",
+      "TDD_HGPRC": "58,700",
+      "TDD_LWPRC": "58,700",
+      "ACC_TRDVOL": "321,654",
+      "ACC_TRDVAL": "0",
+      "MKTCAP": "9,283,456,789,100",
+      "LIST_SHRS": "158,151,312"
+    }
+  ]
+}

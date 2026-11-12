@@ -1,0 +1,34 @@
+{
+  "_provisional": true,
+  "_note": "SYNTHETIC provisional fixture (S0a). Shape follows OpenDART developer guide; replace with real response when DART real-key verification is done (PENDING).",
+  "status": "000",
+  "message": "정상",
+  "page_no": 1,
+  "page_count": 100,
+  "total_count": 2,
+  "total_page": 1,
+  "list": [
+    {
+      "corp_code": "01987654",
+      "corp_name": "가치토자바이오",
+      "stock_code": "",
+      "corp_cls": "E",
+      "report_nm": "증권신고서(지분증권)",
+      "rcept_no": "20261020000123",
+      "flr_nm": "가치토자바이오",
+      "rcept_dt": "20261020",
+      "rm": ""
+    },
+    {
+      "corp_code": "01876543",
+      "corp_name": "샘플로보틱스",
+      "stock_code": "",
+      "corp_cls": "E",
+      "report_nm": "[기재정정]증권신고서(지분증권)",
+      "rcept_no": "20261028000456",
+      "flr_nm": "샘플로보틱스",
+      "rcept_dt": "20261028",
+      "rm": "정"
+    }
+  ]
+}

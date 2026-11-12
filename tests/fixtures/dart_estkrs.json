@@ -1,0 +1,63 @@
+{
+  "_provisional": true,
+  "_note": "SYNTHETIC provisional fixture (S0a). Shape follows OpenDART developer guide; replace with real response when DART real-key verification is done (PENDING). estkRs.json has no listing-date field; listing date comes from document text.",
+  "status": "000",
+  "message": "정상",
+  "group": [
+    {
+      "title": "일반사항",
+      "list": [
+        {
+          "rcept_no": "20261020000123",
+          "corp_cls": "E",
+          "corp_code": "01987654",
+          "corp_name": "가치토자바이오",
+          "sbd": "2026년 11월 16일 ~ 2026년 11월 17일",
+          "pymd": "2026년 11월 19일",
+          "sband": "2026년 11월 16일",
+          "asand": "2026년 11월 19일",
+          "asstd": "-",
+          "exstk": "-",
+          "exprc": "-",
+          "expd": "-",
+          "rpt_rcv": "-"
+        }
+      ]
+    },
+    {
+      "title": "증권의종류",
+      "list": [
+        {
+          "rcept_no": "20261020000123",
+          "corp_cls": "E",
+          "corp_code": "01987654",
+          "corp_name": "가치토자바이오",
+          "stksen": "기명식보통주",
+          "stkcnt": "4,000,000",
+          "fv": "500",
+          "slprc": "22,000",
+          "slta": "88,000,000,000",
+          "slmthn": "일반공모"
+        }
+      ]
+    },
+    {
+      "title": "인수인정보",
+      "list": [
+        {
+          "rcept_no": "20261020000123",
+          "corp_cls": "E",
+          "corp_code": "01987654",
+          "corp_name": "가치토자바이오",
+          "actsen": "대표",
+          "actnmn": "샘플증권",
+          "stksen": "기명식보통주",
+          "udtcnt": "4,000,000",
+          "udtamt": "88,000,000,000",
+          "udtprc": "1,760,000,000",
+          "udtmth": "총액인수"
+        }
+      ]
+    }
+  ]
+}

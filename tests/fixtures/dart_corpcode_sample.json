@@ -1,0 +1,24 @@
+{
+  "_provisional": true,
+  "_note": "SYNTHETIC provisional fixture (S0a). Shape follows OpenDART developer guide; replace with real response when DART real-key verification is done (PENDING). corpCode.xml (zip) parsed to rows; includes an alphanumeric stock_code.",
+  "list": [
+    {
+      "corp_code": "00126380",
+      "corp_name": "삼성전자",
+      "stock_code": "005930",
+      "modify_date": "20260101"
+    },
+    {
+      "corp_code": "01987654",
+      "corp_name": "가치토자바이오",
+      "stock_code": "0158S0",
+      "modify_date": "20261111"
+    },
+    {
+      "corp_code": "01876543",
+      "corp_name": "샘플로보틱스",
+      "stock_code": " ",
+      "modify_date": "20261028"
+    }
+  ]
+}

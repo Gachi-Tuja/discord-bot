@@ -1,0 +1,7 @@
+{
+  "_provisional": true,
+  "_note": "SYNTHETIC provisional fixture (S0a). Shape follows OpenDART developer guide; replace with real response when DART real-key verification is done (PENDING). document.xml is a zip of XML; this holds the extracted plain text excerpt used by the listing-date extractor.",
+  "rcept_no": "20261020000123",
+  "text_excerpt": "【 일정 】 청약기일: 2026년 11월 16일 ~ 2026년 11월 17일 납입기일: 2026년 11월 19일 ... 상장예정일: 2026년 11월 25일 (주1) 상기 일정은 관계기관과의 협의에 따라 변경될 수 있습니다.",
+  "expected_listing_date": "2026-11-25"
+}
