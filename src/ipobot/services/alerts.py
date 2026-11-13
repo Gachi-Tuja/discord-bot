@@ -1,4 +1,8 @@
-"""운영자 경보: `OPERATOR_ALERT` ERROR 로그를 종류별로 하루(KST 날짜) 1회만 남긴다."""
+"""운영자 경보: `OPERATOR_ALERT` ERROR 로그를 종류별로 KST 날짜당 1회만 남긴다.
+
+중복 제거 기준은 24시간 창이 아니라 KST 달력 날짜다(23:59 경보 뒤 00:00 경보는 새로 남는다).
+컴포지션 루트(S15 `bot/app.py`)는 `set_default(OperatorAlerts(clock))`로 주입 시계를 쓴다.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ class OperatorAlerts:
         self._last_alerted: dict[str, date] = {}
 
     def alert(self, kind: str, detail: str) -> bool:
-        """경보를 남겼으면 True, 같은 날 이미 남긴 종류라 생략했으면 False."""
+        """경보를 남겼으면 True, 같은 KST 날짜에 이미 남긴 종류라 생략했으면 False."""
         today = today_kst(self._clock)
         if self._last_alerted.get(kind) == today:
             log.debug("OPERATOR_ALERT 생략(오늘 이미 기록) kind=%s detail=%s", kind, detail)
