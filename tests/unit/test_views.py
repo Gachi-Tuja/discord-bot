@@ -243,3 +243,45 @@ async def test_unexpected_confirm_error_is_generic_not_krx_failure():
     await view.on_confirm(inter)
     inter.followup.send.assert_awaited_once_with(INTERACTION_FAILED_TEXT, ephemeral=True)
     assert inter.followup.send.await_args.args[0] != REJECT_KRX_FAILED
+
+
+async def test_defer_failure_does_not_leave_view_busy():
+    view, store, draft_id, confirm = make_view()
+    first = interaction()
+    first.response.defer.side_effect = discord.HTTPException(MagicMock(status=500), "defer failed")
+    with pytest.raises(discord.HTTPException):
+        await view.on_confirm(first)
+    confirm.assert_not_awaited()
+    # 다시 누르면 「처리 중」이 아니라 정상 확정된다.
+    again = interaction()
+    await view.on_confirm(again)
+    again.response.send_message.assert_not_awaited()
+    confirm.assert_awaited_once()
+    assert store.get(draft_id) is None
+
+
+async def test_cancelled_confirm_does_not_leave_view_busy():
+    gate = asyncio.Event()
+
+    async def hang(draft):
+        await gate.wait()
+
+    view, store, draft_id, _ = make_view(hang)
+    task = asyncio.create_task(view.on_confirm(interaction()))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    cancelling = interaction()
+    await view.on_cancel(cancelling)  # BUSY가 아니므로 취소가 진행된다
+    cancelling.response.send_message.assert_not_awaited()
+    cancelling.response.edit_message.assert_awaited_once_with(content=CANCELLED_TEXT, view=None)
+
+
+async def test_view_on_error_reports_generic_failure():
+    from ipobot.bot.errors import INTERACTION_FAILED_TEXT
+
+    view, *_ = make_view()
+    inter = interaction(done=True)
+    await view.on_error(inter, RuntimeError("boom"), view.confirm_button)
+    inter.followup.send.assert_awaited_once_with(INTERACTION_FAILED_TEXT, ephemeral=True)

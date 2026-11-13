@@ -14,7 +14,7 @@ from typing import Any
 
 import discord
 
-from ipobot.bot.errors import INTERACTION_FAILED_TEXT
+from ipobot.bot.errors import INTERACTION_FAILED_TEXT, report_interaction_error
 from ipobot.bot.formatting import (
     CONFIRM_RESULT_SCHEDULE,
     REJECT_KRX_FAILED,
@@ -162,20 +162,25 @@ class ConfirmView(discord.ui.View):
             await interaction.response.send_message(EXPIRED_TEXT if draft is None else BUSY_TEXT, ephemeral=True)
             return
         self._busy = True
-        await interaction.response.defer()
+        resolved = False
         try:
-            result = await self._confirm(draft)
-        except Exception:
-            # KRX 실패는 서비스가 Rejected로 돌려준다. 여기 오는 것은 예상하지 못한 오류이므로 일반 실패로 안내한다.
-            log.exception("예측 확정 실패 draft=%s", self.draft_id)
-            self._busy = False
-            await interaction.followup.send(INTERACTION_FAILED_TEXT, ephemeral=True)
-            return
-        if isinstance(result, Rejected) and result.message in RETRYABLE_REJECTIONS:
-            self._busy = False
-            await interaction.followup.send(clip_content(result.message), ephemeral=True)
-            return
-        self.store.resolve(self.draft_id)
+            await interaction.response.defer()
+            try:
+                result = await self._confirm(draft)
+            except Exception:
+                # KRX 실패는 서비스가 Rejected로 돌려준다. 여기 오는 것은 예상하지 못한 오류이므로 일반 실패로 안내한다.
+                log.exception("예측 확정 실패 draft=%s", self.draft_id)
+                await interaction.followup.send(INTERACTION_FAILED_TEXT, ephemeral=True)
+                return
+            if isinstance(result, Rejected) and result.message in RETRYABLE_REJECTIONS:
+                await interaction.followup.send(clip_content(result.message), ephemeral=True)
+                return
+            self.store.resolve(self.draft_id)
+            resolved = True
+        finally:
+            # defer 실패·취소(CancelledError)·재시도 가능한 거부 모두 초안이 남아 있으므로 다시 누를 수 있게 한다.
+            if not resolved:
+                self._busy = False
         self.stop()
         self._disable()
         await interaction.edit_original_response(view=self)
@@ -196,6 +201,11 @@ class ConfirmView(discord.ui.View):
         self.store.resolve(self.draft_id)
         self.stop()
         await interaction.response.edit_message(content=CANCELLED_TEXT, view=None)
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
+    ) -> None:
+        await report_interaction_error(interaction, error)
 
     async def on_timeout(self) -> None:
         self.store.expire(self.draft_id)
