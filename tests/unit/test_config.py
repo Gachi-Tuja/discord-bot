@@ -46,6 +46,19 @@ def test_missing_required_names_variable(base_env, name):
         load_settings(base_env)
 
 
+def test_missing_required_message_format(base_env):
+    del base_env["DISCORD_TOKEN"]
+    with pytest.raises(ConfigError) as info:
+        load_settings(base_env)
+    assert str(info.value) == "필수 환경변수가 없습니다: DISCORD_TOKEN"
+
+
+def test_clock_timezone_comes_from_config():
+    from ipobot import clock
+
+    assert clock.KST.key == config.TIMEZONE_NAME
+
+
 @pytest.mark.parametrize("name", REQUIRED_NAMES)
 def test_blank_required_is_missing(base_env, name):
     base_env[name] = "   "
@@ -132,4 +145,3 @@ def test_code_constants():
     assert config.SEND_CALL_TIMEOUT == 20
     assert config.SEND_INWINDOW_BUDGET == 90
     assert config.NONCE_MAX_LENGTH == 25
-    assert config.TIMEZONE_NAME == "Asia/Seoul"

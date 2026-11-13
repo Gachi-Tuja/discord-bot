@@ -196,9 +196,13 @@ def decide(
         new_streak = replace(new_streak, since=new_streak.since or today, last_day=today, days=new_streak.days + 1)
     # auth 프런티어는 프런티어 이동 리셋만 적용하고 그대로 둔다.
 
-    if frontier is not None and _is_unavailable(frontier[1]) and after_close:
-        if new_streak.days >= cfg.judge_stale_business_days:
-            return terminal(Unjudgeable(REASON_KRX_UNAVAILABLE), frontier_day, new_streak, REASON_KRX_UNAVAILABLE)
+    if (
+        frontier is not None
+        and _is_unavailable(frontier[1])
+        and after_close
+        and new_streak.days >= cfg.judge_stale_business_days
+    ):
+        return terminal(Unjudgeable(REASON_KRX_UNAVAILABLE), frontier_day, new_streak, REASON_KRX_UNAVAILABLE)
 
     if cal.is_open(today) and not after_close:
         next_attempt_at = max(now + timedelta(minutes=cfg.krx_poll_interval_minutes), _at(today, cfg.judge_time))

@@ -39,7 +39,7 @@ def make_services(base_env, fake_clock) -> Services:
         open_database(":memory:"),
         krx=SimpleNamespace(aclose=AsyncMock()),
         dart=SimpleNamespace(aclose=AsyncMock()),
-        llm=SimpleNamespace(),
+        llm=SimpleNamespace(aclose=AsyncMock()),
     )
 
 
@@ -52,10 +52,11 @@ async def test_services_wire_scheduler_jobs_in_order(base_env, fake_clock):
     assert isinstance(weekly.__self__, WeeklyService) and weekly.__self__.channel is ipo_channel
     assert isinstance(judging.__self__, JudgingService) and judging.__self__ is announcements.__self__
     assert judging.__self__.cfg.judge_max_attempts == svc.settings.judge_max_attempts
-    krx, dart = svc.krx, svc.dart
+    krx, dart, llm = svc.krx, svc.dart, svc.llm
     await svc.aclose()
     krx.aclose.assert_awaited_once()
     dart.aclose.assert_awaited_once()
+    llm.aclose.assert_awaited_once()
 
 
 async def test_services_default_adapters_from_settings(base_env, fake_clock):

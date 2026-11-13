@@ -64,6 +64,9 @@ class AnthropicLlmClient:
         self._summary_model = summary_model
         self._parse_model = parse_model
 
+    async def aclose(self) -> None:
+        await self._client.close()
+
     async def _create(self, **kwargs: Any) -> Any:
         try:
             return await self._client.messages.create(**kwargs)

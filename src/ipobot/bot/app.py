@@ -124,7 +124,7 @@ class Services:
         ]
 
     async def aclose(self) -> None:
-        for client in (self.krx, self.dart):
+        for client in (self.krx, self.dart, self.llm):
             close = getattr(client, "aclose", None)
             if close is not None:
                 await close()
@@ -137,7 +137,7 @@ class IpoBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned, intents=discord.Intents.default(), help_command=None)
         self.settings = settings
         self.clock = clock or SystemClock()
-        alerts.set_default(OperatorAlerts(self.clock))  # Gate3 F8: 주입 시계의 영업일 기준 경보
+        alerts.set_default(OperatorAlerts(self.clock))  # Gate3 F8: KST 달력 날짜 기준 kind별 1회 경보
         self.drafts = DraftStore()
         self._services = services
         self.tree.on_error = self.on_app_command_error

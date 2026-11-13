@@ -188,11 +188,21 @@ class FakeMessages:
 class FakeAnthropic:
     def __init__(self, result):
         self.messages = FakeMessages(result)
+        self.closed = 0
+
+    async def close(self):
+        self.closed += 1
 
 
 def llm_client(result) -> tuple[AnthropicLlmClient, FakeAnthropic]:
     fake = FakeAnthropic(result)
     return AnthropicLlmClient("key", summary_model="sum-model", parse_model="parse-model", client=fake), fake
+
+
+async def test_adapter_aclose_closes_underlying_client():
+    client, fake = llm_client(None)
+    await client.aclose()
+    assert fake.closed == 1
 
 
 async def test_adapter_summarize_request_and_text():

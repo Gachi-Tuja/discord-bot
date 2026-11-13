@@ -65,7 +65,7 @@ class Settings:
 def _required(env: Mapping[str, str], name: str) -> str:
     value = env.get(name, "").strip()
     if not value:
-        raise ConfigError(f"필수 환경변수 {name}가 없습니다")
+        raise ConfigError(f"필수 환경변수가 없습니다: {name}")
     return value
 
 

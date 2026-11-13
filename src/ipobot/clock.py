@@ -6,7 +6,9 @@ from datetime import date, datetime, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
-KST = ZoneInfo("Asia/Seoul")
+from ipobot.config import TIMEZONE_NAME
+
+KST = ZoneInfo(TIMEZONE_NAME)
 
 
 class Clock(Protocol):
