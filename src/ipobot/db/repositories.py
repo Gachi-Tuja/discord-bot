@@ -41,32 +41,6 @@ class JudgmentRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
-    def insert_pending(self, rows: Sequence[NewJudgment], now: datetime) -> list[int]:
-        """pending 판정들을 한 트랜잭션으로 넣는다. 하나라도 실패하면 아무것도 남지 않는다."""
-        ids: list[int] = []
-        ts = utc_iso(now)
-        with transaction(self._conn) as c:
-            for r in rows:
-                cur = c.execute(
-                    """
-                    INSERT INTO judgments (stock_code, market, base_date, horizon_months, target_date,
-                                           judge_trade_date, status, next_attempt_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-                    """,
-                    (
-                        r.stock_code,
-                        r.market,
-                        r.base_date.isoformat(),
-                        r.horizon_months,
-                        r.target_date.isoformat(),
-                        r.judge_trade_date.isoformat(),
-                        utc_iso(r.next_attempt_at),
-                        ts,
-                    ),
-                )
-                ids.append(int(cur.lastrowid))
-        return ids
-
     def get(self, judgment_id: int) -> sqlite3.Row:
         row = self._conn.execute("SELECT * FROM judgments WHERE id = ?", (judgment_id,)).fetchone()
         if row is None:

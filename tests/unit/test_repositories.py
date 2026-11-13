@@ -10,12 +10,14 @@ from ipobot.db.repositories import (
     CalendarRepo,
     JudgmentRepo,
     NewJudgment,
+    NewPrediction,
     NotFoundError,
     PartOrderError,
+    PredictionRepo,
     RepositoryError,
 )
 from ipobot.domain.judging_policy import Adopt, Decision, MarketClosed, Unjudgeable, Wait
-from ipobot.domain.models import EMPTY_STREAK, DailyQuote, UnavailStreak
+from ipobot.domain.models import EMPTY_STREAK, DailyQuote, PredictionTarget, UnavailStreak
 from ipobot.domain.scoring import ScoredEntry
 
 NOW = datetime(2026, 11, 12, 9, 0, tzinfo=KST)
@@ -249,9 +251,31 @@ def _new(horizon=1, code="0158S0", market="KOSDAQ"):
     )
 
 
-def test_insert_pending_initial_values(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
+def _seed(conn, horizons=(1,)):
+    """판정 행은 운영 경로(PredictionRepo.confirm)로만 만든다. 예측 1건(id 1)과 시점별 판정 id를 돌려준다."""
+    p = NewPrediction(
+        discord_user_id=PREDICTION["discord_user_id"],
+        discord_user_name=PREDICTION["discord_user_name"],
+        stock_code=PREDICTION["stock_code"],
+        corp_name=PREDICTION["corp_name"],
+        market=PREDICTION["market"],
+        base_date=date.fromisoformat(PREDICTION["base_date"]),
+        base_price=PREDICTION["base_price"],
+        base_market_cap=PREDICTION["base_market_cap"],
+        reason=PREDICTION["reason"],
+        raw_text=PREDICTION["raw_text"],
+        targets=tuple((PredictionTarget(h, 25_000, 500_000_000_000, "2.5만", "5000억"), D_TARGET) for h in horizons),
+    )
+    pid = PredictionRepo(conn).confirm(p, [_new(h) for h in horizons], NOW)
+    assert pid == PREDICTION["id"]
+    ids = [
+        conn.execute("SELECT id FROM judgments WHERE horizon_months = ?", (h,)).fetchone()["id"] for h in horizons
+    ]
+    return JudgmentRepo(conn), ids
+
+
+def test_confirmed_judgment_initial_values(conn):
+    repo, [jid] = _seed(conn)
     row = repo.get(jid)
     assert row["status"] == "pending"
     assert row["next_attempt_at"] == "2026-12-11T00:00:00+00:00"
@@ -260,17 +284,17 @@ def test_insert_pending_initial_values(conn):
     assert row["auth_delay_parts_sent"] == 0 and row["auth_delay_notified_at"] is None
 
 
-def test_insert_pending_rolls_back_whole_batch(conn):
-    repo = JudgmentRepo(conn)
+def test_confirm_rolls_back_whole_batch(conn):
     with pytest.raises(sqlite3.IntegrityError):
-        repo.insert_pending([_new(1), _new(3), _new(2)], NOW)  # horizon 2는 CHECK 위반
+        _seed(conn, horizons=(1, 3, 2))  # horizon 2는 CHECK 위반
     assert conn.execute("SELECT count(*) FROM judgments").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM predictions").fetchone()[0] == 0
     assert not conn.in_transaction
-    # 중복(UNIQUE)도 전체 롤백
-    repo.insert_pending([_new(1)], NOW)
-    with pytest.raises(sqlite3.IntegrityError):
-        repo.insert_pending([_new(3), _new(1)], NOW)
-    assert conn.execute("SELECT count(*) FROM judgments").fetchone()[0] == 1
+
+
+def test_insert_pending_is_gone():
+    # 판정 행은 예측 확정 트랜잭션에서만 생긴다(고아 판정 방지).
+    assert not hasattr(JudgmentRepo, "insert_pending")
 
 
 def test_get_missing(conn):
@@ -295,17 +319,13 @@ def _scored(pid=1, rank=1, solo=True):
 
 
 def _done(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
-    _insert(conn, "predictions", PREDICTION)
+    repo, [jid] = _seed(conn)
     repo.apply_decision(jid, _decision(Adopt(D_TARGET, _quote()), nxt=NOW), [_scored()], NOW)
     return repo, jid
 
 
 def test_apply_decision_adopt_writes_done_results_and_closed_days(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
-    _insert(conn, "predictions", PREDICTION)
+    repo, [jid] = _seed(conn)
     d11 = date(2026, 12, 11)
     closed = [MarketClosed(D_TARGET, d11)]
     repo.apply_decision(jid, _decision(Adopt(d11, _quote(d11)), day=d11, closed=closed, nxt=LATER, nt=1), [_scored()], LATER)
@@ -322,8 +342,7 @@ def test_apply_decision_adopt_writes_done_results_and_closed_days(conn):
 
 
 def test_apply_decision_wait_updates_streak_and_keeps_pending(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
+    repo, [jid] = _seed(conn)
     streak = UnavailStreak(D_TARGET, D_TARGET, 1)
     repo.apply_decision(jid, _decision(Wait(D_TARGET), streak=streak, last_error="krx_fetch"), [], NOW)
     row = repo.get(jid)
@@ -337,8 +356,7 @@ def test_apply_decision_wait_updates_streak_and_keeps_pending(conn):
 
 
 def test_apply_decision_rejects_mismatched_results(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
+    repo, [jid] = _seed(conn)
     with pytest.raises(ValueError):
         repo.apply_decision(jid, _decision(Adopt(D_TARGET, _quote())), [], NOW)
     with pytest.raises(ValueError):
@@ -347,9 +365,7 @@ def test_apply_decision_rejects_mismatched_results(conn):
 
 
 def test_apply_decision_check_failure_rolls_back_everything(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
-    _insert(conn, "predictions", PREDICTION)
+    repo, [jid] = _seed(conn)
     early = date(2026, 12, 9)  # target_date 이전 → done CHECK 위반
     closed = [MarketClosed(date(2026, 12, 8), early)]
     with pytest.raises(sqlite3.IntegrityError):
@@ -361,8 +377,7 @@ def test_apply_decision_check_failure_rolls_back_everything(conn):
 
 
 def test_mark_attempt_failed_keeps_streak(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
+    repo, [jid] = _seed(conn)
     streak = UnavailStreak(D_TARGET, D_TARGET, 1)
     repo.apply_decision(jid, _decision(Wait(D_TARGET), streak=streak, last_error="krx_fetch"), [], NOW)
     repo.mark_attempt_failed(jid, "judging_error", LATER, NOW)
@@ -372,12 +387,10 @@ def test_mark_attempt_failed_keeps_streak(conn):
 
 
 def test_due_queries(conn):
-    repo = JudgmentRepo(conn)
-    [j1, j3] = repo.insert_pending([_new(1), _new(3)], NOW)
+    repo, [j1, j3] = _seed(conn, horizons=(1, 3))
     due_at = datetime.fromisoformat(repo.get(j1)["next_attempt_at"])
     assert repo.due_pending(due_at - timedelta(seconds=1)) == []
     assert {r["id"] for r in repo.due_pending(datetime(2028, 1, 1, tzinfo=KST))} == {j1, j3}
-    _insert(conn, "predictions", PREDICTION)
     repo.apply_decision(j1, _decision(Adopt(D_TARGET, _quote()), nxt=NOW), [_scored()], NOW)
     assert [r["id"] for r in repo.due_announcements(NOW)] == [j1]
     assert j1 not in {r["id"] for r in repo.due_pending(datetime(2028, 1, 1, tzinfo=KST))}
@@ -412,8 +425,7 @@ def test_mark_part_sent_requires_first_message_id(conn):
 
 
 def test_mark_part_sent_on_pending_is_rejected_by_check(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
+    repo, [jid] = _seed(conn)
     with pytest.raises(sqlite3.IntegrityError):
         repo.mark_part_sent(jid, 0, "m0", NOW)
     assert repo.get(jid)["announce_parts_sent"] == 0
@@ -440,8 +452,7 @@ def test_mark_announce_failed(conn):
 
 
 def test_auth_delay_progress_and_single_notification(conn):
-    repo = JudgmentRepo(conn)
-    [jid] = repo.insert_pending([_new()], NOW)
+    repo, [jid] = _seed(conn)
     with pytest.raises(PartOrderError):
         repo.mark_auth_delay_notified(jid, 1, NOW)  # 파트 미전송
     with pytest.raises(PartOrderError):
@@ -455,7 +466,6 @@ def test_auth_delay_progress_and_single_notification(conn):
     with pytest.raises(PartOrderError):
         repo.mark_auth_delay_notified(jid, 1, NOW)
     # 이후 정상 판정이 되어도 값은 보존된다(감사용)
-    _insert(conn, "predictions", PREDICTION)
     repo.apply_decision(jid, _decision(Adopt(D_TARGET, _quote())), [_scored()], NOW)
     assert repo.get(jid)["auth_delay_notified_at"] == "2026-11-12T00:00:00+00:00"
 
