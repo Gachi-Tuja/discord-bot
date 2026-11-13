@@ -529,6 +529,56 @@ async def test_auth_delay_notice_once_across_restart_then_result(h, caplog):
     assert row["announced_at"] is not None
 
 
+async def test_auth_delay_notice_crash_after_send_before_record_is_resent_once(h, monkeypatch):
+    # 안내를 게시한 뒤 진행 기록 전에 죽으면 메모리 대기열이 사라진다. 재시작 후 DB에서 되살려
+    # 다음 틱(+1분, nonce 중복 제거 창 안)에 같은 nonce로 재전송하고 메시지는 하나로 남아야 한다.
+    await h.predict(1)
+    jid = h.judgment_id()
+    h.krx.sticky[("KOSDAQ", JUDGE_DAY)] = KrxAuthError("401")
+
+    def crash(self, judgment_id, part_index, now):
+        raise Crash
+
+    monkeypatch.setattr(JudgmentRepo, "mark_auth_delay_part_sent", crash)
+    with pytest.raises(Crash):
+        await h.tick(at(ANNOUNCE_DAY))
+    monkeypatch.undo()
+    assert posted(h.result) == [f"a{jid}:0"]
+    assert (h.row(jid)["auth_delay_parts_sent"], h.row(jid)["auth_delay_notified_at"]) == (0, None)
+
+    h.crash_restart()
+    await h.tick(at(ANNOUNCE_DAY, 9, 1))
+    row = h.row(jid)
+    assert row["auth_delay_notified_at"] is not None and row["auth_delay_parts_sent"] == 1
+    assert posted(h.result) == [f"a{jid}:0"]
+    assert [nonce for nonce, _ in h.result.calls] == [f"a{jid}:0", f"a{jid}:0"]
+    await h.tick(at(ANNOUNCE_DAY, 9, 30))
+    assert len(h.result.calls) == 2
+
+
+async def test_auth_delay_notice_crash_before_send_is_sent_after_restart(h, monkeypatch):
+    # 판정(Wait·krx_auth)은 기록됐지만 안내 전에 죽은 경우: 재시작한 인스턴스가 DB에서 대기열을 되살린다.
+    await h.predict(1)
+    jid = h.judgment_id()
+    h.krx.sticky[("KOSDAQ", JUDGE_DAY)] = KrxAuthError("401")
+
+    async def crash(self):
+        raise Crash
+
+    from ipobot.services.judging import JudgingService
+
+    monkeypatch.setattr(JudgingService, "run_announcements", crash)
+    with pytest.raises(Crash):
+        await h.tick(at(ANNOUNCE_DAY))
+    monkeypatch.undo()
+    assert h.result.calls == [] and h.row(jid)["last_error"] == "krx_auth"
+
+    h.crash_restart()
+    await h.tick(at(ANNOUNCE_DAY, 9, 1))
+    assert posted(h.result) == [f"a{jid}:0"]
+    assert h.row(jid)["auth_delay_notified_at"] is not None
+
+
 # ---------------------------------------------------------------- 판정 불가 경로
 
 

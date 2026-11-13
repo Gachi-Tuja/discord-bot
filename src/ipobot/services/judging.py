@@ -98,13 +98,19 @@ class JudgingService:
     # deliver_parts 추가 인자(테스트의 sleep·retry_delays 주입용)
     delivery_options: Mapping[str, Any] = field(default_factory=dict)
     alert: Callable[[str, str], bool] | None = None
-    # 지연 안내 대기열: judgment_id → 다음 전송 가능 시각. run_judging이 F4 조건으로 채운다.
+    # 지연 안내 대기열: judgment_id → 다음 전송 가능 시각. run_judging이 F4 조건으로 채우고,
+    # 시작 시와 매 공지 주기에 DB에서 되살린다(재시작으로 대기열을 잃어도 안내가 1회 나간다).
     _auth_notice_due: dict[int, datetime] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.judgments = JudgmentRepo(self.conn)
         self.predictions = PredictionRepo(self.conn)
         self.calendar_repo = CalendarRepo(self.conn)
+        self._restore_auth_notices(self.clock.now())
+
+    def _restore_auth_notices(self, now: datetime) -> None:
+        for jid in self.judgments.pending_auth_notice_ids():
+            self._auth_notice_due.setdefault(jid, now)
 
     @property
     def _interval(self) -> timedelta:
@@ -233,6 +239,7 @@ class JudgingService:
 
     async def run_announcements(self) -> None:
         now = self.clock.now()
+        self._restore_auth_notices(now)  # 기존 항목의 백오프 시각은 그대로 둔다
         for row in self.judgments.due_announcements(now):
             try:
                 await self._announce(row, now)

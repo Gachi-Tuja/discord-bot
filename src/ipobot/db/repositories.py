@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from ipobot.clock import utc_iso
 from ipobot.db.connection import transaction
-from ipobot.domain.judging_policy import Adopt, Decision, Unjudgeable
+from ipobot.domain.judging_policy import LAST_ERROR_BY_FETCH_KIND, Adopt, Decision, Unjudgeable
 from ipobot.domain.models import DailyQuote, IpoListing, PredictionTarget, StockMasterEntry, SummaryRecord
 from ipobot.domain.scoring import ScoredEntry
 
@@ -79,6 +79,22 @@ class JudgmentRepo:
             "SELECT * FROM judgments WHERE status = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, id",
             (utc_iso(now),),
         ).fetchall()
+
+    def pending_auth_notice_ids(self) -> list[int]:
+        """지연 안내가 남은 판정(Part A1): pending·미안내이면서 마지막 시도가 인증 오류였거나 안내를 일부 보낸 행.
+
+        재시작 후 메모리 대기열을 DB에서 되살리는 데 쓴다.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT id FROM judgments
+             WHERE status = 'pending' AND auth_delay_notified_at IS NULL
+               AND (last_error = ? OR auth_delay_parts_sent > 0)
+             ORDER BY id
+            """,
+            (LAST_ERROR_BY_FETCH_KIND["auth"],),
+        ).fetchall()
+        return [row["id"] for row in rows]
 
     def due_announcements(self, now: datetime) -> list[sqlite3.Row]:
         """공지 대상(R22 2단계): 종결·미공지이고 next_attempt_at ≤ now."""
