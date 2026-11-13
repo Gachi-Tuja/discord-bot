@@ -2,6 +2,8 @@
 
 - `krx-probe YYYY-MM-DD [--code C]`: 3개 시장 KRX 응답을 조회해 행 수·이상 행·종목 관측을 출력한다.
   키·형식 확인용(CP-KRX)이며 DB에 쓰지 않는다(메모리 DB 사용).
+- `sync-master`: DART corpCode.xml로 `stock_master`를 갱신한다(DB_PATH).
+- `preview-digest [--date YYYY-MM-DD]`: 상장 예정 다이제스트를 게시하지 않고 출력한다(기본 오늘, KST).
 """
 
 from __future__ import annotations
@@ -9,16 +11,26 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sqlite3
 import sys
 from collections.abc import Sequence
 from datetime import date
 from typing import TextIO
 
-from ipobot.clock import SystemClock
-from ipobot.config import ConfigError
+from ipobot.bot.formatting import Part, digest_parts
+from ipobot.clock import Clock, SystemClock, today_kst
+from ipobot.config import ConfigError, _int, _optional
 from ipobot.db.connection import open_database
 from ipobot.domain.models import MARKETS, MarketDayRows
 from ipobot.domain.tickers import normalize_code
+from ipobot.services.ipo_digest import (
+    DART_UNAVAILABLE_TEXT,
+    DartClient,
+    DartUnavailable,
+    IpoDigestService,
+    digest_items,
+    sync_stock_master,
+)
 from ipobot.services.quotes import KrxAuthError, KrxClient, KrxFetchError, QuoteService
 
 DEFAULT_KRX_BASE_URL = "https://data-dbg.krx.co.kr/svc/apis"
@@ -46,6 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
     probe = sub.add_parser("krx-probe", help="KRX 일별매매정보 3개 시장 조회")
     probe.add_argument("trade_date", type=_parse_date, metavar="YYYY-MM-DD")
     probe.add_argument("--code", type=_parse_code, default=None)
+    sub.add_parser("sync-master", help="DART corpCode.xml로 종목 마스터 갱신")
+    preview = sub.add_parser("preview-digest", help="상장 예정 다이제스트 미리보기(게시 안 함)")
+    preview.add_argument("--date", dest="post_date", type=_parse_date, default=None, metavar="YYYY-MM-DD")
     return parser
 
 
@@ -77,6 +92,73 @@ async def krx_probe(client: KrxClient, trade_date: date, code: str | None, out: 
     return 1 if failed else 0
 
 
+def part_text(part: Part) -> str:
+    """미리보기용 평문 렌더링."""
+    lines: list[str] = []
+    if part.content:
+        lines.append(part.content)
+    for embed in part.embeds:
+        if embed.get("title"):
+            lines.append(f"# {embed['title']}")
+        if embed.get("description"):
+            lines.append(embed["description"])
+        for field in embed.get("fields", []):
+            lines.append(f"- {field['name']}: {field['value']}")
+    return "\n".join(lines)
+
+
+async def preview_digest(
+    client: DartClient, conn: sqlite3.Connection, clock: Clock, range_days: int, post_date: date | None, out: TextIO
+) -> int:
+    """다이제스트를 파트 단위로 출력한다. DART 장애면 실패 안내만 출력하고 1을 반환한다(0건 안내 금지)."""
+    day = post_date or today_kst(clock)
+    try:
+        listings = await IpoDigestService(client, conn, clock, range_days).build_digest(day)
+    except DartUnavailable as exc:
+        print(f"{DART_UNAVAILABLE_TEXT} ({exc})", file=out)
+        return 1
+    parts = digest_parts(digest_items(listings), day)
+    for i, part in enumerate(parts):
+        print(f"--- 파트 {i + 1}/{len(parts)} ---", file=out)
+        print(part_text(part), file=out)
+    return 0
+
+
+async def sync_master(client: DartClient, conn: sqlite3.Connection, clock: Clock, out: TextIO) -> int:
+    try:
+        count = await sync_stock_master(client, conn, clock)
+    except DartUnavailable as exc:
+        print(f"{DART_UNAVAILABLE_TEXT} ({exc})", file=out)
+        return 1
+    print(f"stock_master {count}개 종목 갱신", file=out)
+    return 0
+
+
+def _dart_env() -> tuple[str, str, int]:
+    key = os.environ.get("DART_API_KEY", "").strip()
+    if not key:
+        raise ConfigError("필수 환경변수 DART_API_KEY가 없습니다")
+    db_path = _optional(os.environ, "DB_PATH", "./data/ipobot.sqlite3")
+    range_days = _int("IPO_RANGE_DAYS", _optional(os.environ, "IPO_RANGE_DAYS", "14"), minimum=1)
+    return key, db_path, range_days
+
+
+async def _run_dart_command(args: argparse.Namespace) -> int:
+    from ipobot.adapters.dart import HttpDartClient
+
+    key, db_path, range_days = _dart_env()
+    if db_path != ":memory:":
+        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    conn = open_database(db_path)
+    try:
+        async with HttpDartClient(key) as client:
+            if args.command == "sync-master":
+                return await sync_master(client, conn, SystemClock(), sys.stdout)
+            return await preview_digest(client, conn, SystemClock(), range_days, args.post_date, sys.stdout)
+    finally:
+        conn.close()
+
+
 def _krx_env() -> tuple[str, str]:
     key = os.environ.get("KRX_AUTH_KEY", "").strip()
     if not key:
@@ -98,6 +180,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "krx-probe":
             return asyncio.run(_run_krx_probe(args))
+        if args.command in ("sync-master", "preview-digest"):
+            return asyncio.run(_run_dart_command(args))
     except ConfigError as exc:
         print(f"설정 오류: {exc}", file=sys.stderr)
         return 2

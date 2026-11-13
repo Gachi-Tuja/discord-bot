@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from ipobot.clock import utc_iso
 from ipobot.db.connection import transaction
-from ipobot.domain.models import DailyQuote
+from ipobot.domain.models import DailyQuote, IpoListing, StockMasterEntry
 
 
 class RepositoryError(Exception):
@@ -312,3 +312,71 @@ class QuoteCacheRepo:
                     for q in quotes
                 ],
             )
+
+
+class StockMasterRepo:
+    """corpCode.xml 기반 종목 마스터(stock_master)."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def upsert_all(self, entries: Sequence[StockMasterEntry], now: datetime) -> int:
+        """전체 목록을 트랜잭션 1회로 upsert한다. 반환값은 처리한 행 수."""
+        stamp = utc_iso(now)
+        with transaction(self._conn) as c:
+            c.executemany(
+                "INSERT INTO stock_master (stock_code, corp_code, corp_name, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (stock_code) DO UPDATE SET corp_code = excluded.corp_code, "
+                "corp_name = excluded.corp_name, updated_at = excluded.updated_at",
+                [(e.stock_code, e.corp_code, e.corp_name, stamp) for e in entries],
+            )
+        return len(entries)
+
+    def stock_code_for_corp(self, corp_code: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT stock_code FROM stock_master WHERE corp_code = ? ORDER BY stock_code LIMIT 1", (corp_code,)
+        ).fetchone()
+        return None if row is None else row["stock_code"]
+
+
+class IpoListingRepo:
+    """상장 예정 종목(ipo_listings). DART 원문 추출 결과를 접수번호 단위로 캐시한다."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def by_rcept_no(self, rcept_no: str) -> IpoListing | None:
+        row = self._conn.execute(
+            "SELECT * FROM ipo_listings WHERE source_rcept_no = ? ORDER BY id DESC LIMIT 1", (rcept_no,)
+        ).fetchone()
+        return None if row is None else self._from_row(row)
+
+    def upsert_many(self, listings: Sequence[IpoListing], now: datetime) -> None:
+        """트랜잭션 1회로 저장한다. 같은 회사의 다른 상장일 행(정정 전 일정)은 지운다."""
+        stamp = utc_iso(now)
+        with transaction(self._conn) as c:
+            for it in listings:
+                day = it.listing_date.isoformat()
+                c.execute(
+                    "DELETE FROM ipo_listings WHERE corp_code = ? AND listing_date <> ?", (it.corp_code, day)
+                )
+                c.execute(
+                    "INSERT INTO ipo_listings (corp_code, corp_name, stock_code, market, listing_date, "
+                    "source_rcept_no, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (corp_code, listing_date) DO UPDATE SET corp_name = excluded.corp_name, "
+                    "stock_code = COALESCE(excluded.stock_code, ipo_listings.stock_code), "
+                    "market = COALESCE(excluded.market, ipo_listings.market), "
+                    "source_rcept_no = excluded.source_rcept_no, collected_at = excluded.collected_at",
+                    (it.corp_code, it.corp_name, it.stock_code, it.market, day, it.source_rcept_no, stamp),
+                )
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> IpoListing:
+        return IpoListing(
+            corp_code=row["corp_code"],
+            corp_name=row["corp_name"],
+            listing_date=date.fromisoformat(row["listing_date"]),
+            source_rcept_no=row["source_rcept_no"],
+            stock_code=row["stock_code"],
+            market=row["market"],
+        )

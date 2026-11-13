@@ -56,6 +56,43 @@ class MarketDayRows:
         return not self.quotes and not self.anomalies
 
 
+# --- DART 수집(S8) ---
+
+
+@dataclass(frozen=True)
+class DartFiling:
+    """DART list.json의 증권신고서(지분증권) 한 건."""
+
+    rcept_no: str
+    corp_code: str
+    corp_name: str
+    report_nm: str
+    rcept_dt: date
+    market: Market | None = None  # corp_cls Y·K·N만 매핑, 그 밖(E 등)은 None
+    stock_code: str | None = None
+
+
+@dataclass(frozen=True)
+class StockMasterEntry:
+    """corpCode.xml 한 행(상장 종목만)."""
+
+    stock_code: str
+    corp_code: str
+    corp_name: str
+
+
+@dataclass(frozen=True)
+class IpoListing:
+    """상장 예정 종목(ipo_listings 한 행). 상장일은 DART 원문에서 추출한다."""
+
+    corp_code: str
+    corp_name: str
+    listing_date: date
+    source_rcept_no: str
+    stock_code: str | None = None
+    market: Market | None = None
+
+
 # --- DayObs: 한 종목·한 거래일의 관측(R9) ---
 
 
