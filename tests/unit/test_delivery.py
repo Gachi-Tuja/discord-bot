@@ -187,7 +187,9 @@ async def test_not_found_10008_counts_as_delivered_and_continues(caplog):
         result, rec, _ = await deliver(fake, PARTS)
     assert result == Delivered(sent=3)
     assert rec.sent == [(0, "1000"), (1, "deleted"), (2, "1001")]
-    assert any(r.levelno == logging.WARNING and "10008" in r.getMessage() for r in caplog.records)
+    assert any(
+        r.levelno == logging.WARNING and "status=404 code=10008" in r.getMessage() for r in caplog.records
+    )
     assert rec.alerts == []
 
 
@@ -199,6 +201,8 @@ async def test_not_found_code_0_fails_with_alert(caplog):
     assert rec.sent == []
     assert [k for k, _ in rec.alerts] == ["discord_not_found"]
     assert any(r.levelno == logging.ERROR and "code=0" in r.getMessage() for r in caplog.records)
+    assert any("status=404" in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
+    assert "status=404" in rec.alerts[0][1]
     assert len(fake.calls) == 1
 
 
@@ -206,7 +210,7 @@ async def test_unknown_channel_10003():
     fake = FakeDiscord(script=[not_found(10003)])
     result, rec, _ = await deliver(fake, PARTS)
     assert result == Failed("send_channel_not_found", alert=True, index=0)
-    assert [k for k, _ in rec.alerts] == ["discord_channel_not_found"]
+    assert rec.alerts == [("discord_channel_not_found", "nonce=j7:0 status=404 code=10003")]
     assert len(fake.calls) == 1
 
 

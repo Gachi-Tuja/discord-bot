@@ -113,10 +113,12 @@ async def deliver_parts(
                 return Failed("send_forbidden", alert=True, index=i)
             except discord.NotFound as e:
                 if e.code == UNKNOWN_MESSAGE:
-                    log.warning("nonce 원본이 삭제됨(code=%s), 전달로 간주 nonce=%s", e.code, nonce)
+                    log.warning(
+                        "nonce 원본이 삭제됨(status=%s code=%s), 전달로 간주 nonce=%s", e.status, e.code, nonce
+                    )
                     record(i, DELETED_MESSAGE_ID)
                     break
-                detail = f"nonce={nonce} code={e.code}"
+                detail = f"nonce={nonce} status={e.status} code={e.code}"
                 if e.code == UNKNOWN_CHANNEL:
                     log.error("send_channel_not_found %s", detail)
                     raise_alert("discord_channel_not_found", detail)
