@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 Market = Literal["KOSPI", "KOSDAQ", "KONEX"]
@@ -91,6 +91,17 @@ class IpoListing:
     source_rcept_no: str
     stock_code: str | None = None
     market: Market | None = None
+
+
+@dataclass(frozen=True)
+class SummaryRecord:
+    """summaries 한 행(R14). ok면 summary가 있고, failed면 retry_after가 있다."""
+
+    source_rcept_no: str
+    corp_code: str
+    status: Literal["ok", "failed"]
+    summary: str | None
+    retry_after: datetime | None
 
 
 # --- DayObs: 한 종목·한 거래일의 관측(R9) ---

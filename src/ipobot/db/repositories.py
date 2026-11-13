@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from ipobot.clock import utc_iso
 from ipobot.db.connection import transaction
-from ipobot.domain.models import DailyQuote, IpoListing, StockMasterEntry
+from ipobot.domain.models import DailyQuote, IpoListing, StockMasterEntry, SummaryRecord
 
 
 class RepositoryError(Exception):
@@ -380,3 +380,41 @@ class IpoListingRepo:
             stock_code=row["stock_code"],
             market=row["market"],
         )
+
+
+class SummaryRepo:
+    """DART 요약 캐시(summaries, R14). 접수번호당 1행이며 재시도 결과로 덮어쓴다."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def get(self, rcept_no: str) -> SummaryRecord | None:
+        row = self._conn.execute("SELECT * FROM summaries WHERE source_rcept_no = ?", (rcept_no,)).fetchone()
+        if row is None:
+            return None
+        retry = row["retry_after"]
+        return SummaryRecord(
+            source_rcept_no=row["source_rcept_no"],
+            corp_code=row["corp_code"],
+            status=row["status"],
+            summary=row["summary"],
+            retry_after=None if retry is None else datetime.fromisoformat(retry),
+        )
+
+    def save_ok(self, rcept_no: str, corp_code: str, summary: str, now: datetime) -> None:
+        self._upsert(rcept_no, corp_code, "ok", summary, None, now)
+
+    def save_failed(self, rcept_no: str, corp_code: str, retry_after: datetime, now: datetime) -> None:
+        self._upsert(rcept_no, corp_code, "failed", None, utc_iso(retry_after), now)
+
+    def _upsert(
+        self, rcept_no: str, corp_code: str, status: str, summary: str | None, retry_after: str | None, now: datetime
+    ) -> None:
+        with transaction(self._conn) as c:
+            c.execute(
+                "INSERT INTO summaries (source_rcept_no, corp_code, status, summary, retry_after, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (source_rcept_no) DO UPDATE SET "
+                "corp_code = excluded.corp_code, status = excluded.status, summary = excluded.summary, "
+                "retry_after = excluded.retry_after, created_at = excluded.created_at",
+                (rcept_no, corp_code, status, summary, retry_after, utc_iso(now)),
+            )
