@@ -14,6 +14,7 @@ from typing import Any
 
 import discord
 
+from ipobot.bot.errors import INTERACTION_FAILED_TEXT
 from ipobot.bot.formatting import (
     CONFIRM_RESULT_SCHEDULE,
     REJECT_KRX_FAILED,
@@ -165,9 +166,10 @@ class ConfirmView(discord.ui.View):
         try:
             result = await self._confirm(draft)
         except Exception:
+            # KRX 실패는 서비스가 Rejected로 돌려준다. 여기 오는 것은 예상하지 못한 오류이므로 일반 실패로 안내한다.
             log.exception("예측 확정 실패 draft=%s", self.draft_id)
             self._busy = False
-            await interaction.followup.send(REJECT_KRX_FAILED, ephemeral=True)
+            await interaction.followup.send(INTERACTION_FAILED_TEXT, ephemeral=True)
             return
         if isinstance(result, Rejected) and result.message in RETRYABLE_REJECTIONS:
             self._busy = False

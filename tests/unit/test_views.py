@@ -232,3 +232,14 @@ async def test_long_rejection_message_is_clipped_to_2000():
     await view.on_confirm(inter)
     (text,), kwargs = inter.followup.send.await_args
     assert len(text) <= 2000 and kwargs == {"ephemeral": True}
+
+
+async def test_unexpected_confirm_error_is_generic_not_krx_failure():
+    from ipobot.bot.errors import INTERACTION_FAILED_TEXT
+    from ipobot.bot.formatting import REJECT_KRX_FAILED
+
+    view, store, draft_id, _ = make_view(AsyncMock(side_effect=OverflowError("int too big")))
+    inter = interaction()
+    await view.on_confirm(inter)
+    inter.followup.send.assert_awaited_once_with(INTERACTION_FAILED_TEXT, ephemeral=True)
+    assert inter.followup.send.await_args.args[0] != REJECT_KRX_FAILED

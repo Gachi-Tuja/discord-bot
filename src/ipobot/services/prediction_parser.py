@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from ipobot.bot.formatting import amount_mismatch_warning, amount_unparseable_warning
 from ipobot.domain.models import ParsedPrediction, PredictionTarget
@@ -27,6 +27,8 @@ from ipobot.domain.money import cross_check
 
 HORIZONS: tuple[int, ...] = (1, 3, 6, 12)
 PREDICTION_TOOL_NAME = "submit_prediction"
+# 금액 상한(1경 원). 실제 주가·시총보다 훨씬 크고 SQLite INTEGER(int64)보다 충분히 작다.
+MAX_AMOUNT = 10**16
 
 
 class TargetInput(BaseModel):
@@ -34,9 +36,9 @@ class TargetInput(BaseModel):
 
     horizon_months: int = Field(description="예측 시점(개월). 1, 3, 6, 12 중 하나")
     price_text: str = Field(description="사용자가 쓴 주가 표현 원문 그대로(예: '31,500원', '3만원')")
-    price: int = Field(description="price_text를 원 단위 정수로 환산한 값")
+    price: StrictInt = Field(description="price_text를 원 단위 정수로 환산한 값")
     market_cap_text: str = Field(description="사용자가 쓴 시가총액 표현 원문 그대로(예: '3,500억', '1조')")
-    market_cap: int = Field(description="market_cap_text를 원 단위 정수로 환산한 값")
+    market_cap: StrictInt = Field(description="market_cap_text를 원 단위 정수로 환산한 값")
 
 
 class PredictionToolInput(BaseModel):
@@ -120,10 +122,10 @@ def validate_prediction(payload: Mapping[str, Any] | None) -> ParsedPrediction |
         f"{t.horizon_months}개월 {label}"
         for t in targets
         for label, value in (("주가", t.price), ("시총", t.market_cap))
-        if value <= 0
+        if not 0 < value <= MAX_AMOUNT
     ]
     if bad:
-        return InvalidAmount(f"금액은 0보다 커야 합니다: {', '.join(bad)}")
+        return InvalidAmount(f"금액은 0보다 크고 1경 원 이하여야 합니다: {', '.join(bad)}")
 
     mismatches: list[str] = []
     warnings: list[str] = []

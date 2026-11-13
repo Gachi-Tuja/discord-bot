@@ -256,3 +256,25 @@ def test_huge_unparseable_texts_keep_warnings_short():
     assert isinstance(result, ParsedPrediction)
     (warning,) = result.warnings
     assert len(warning) < 100 and warning.count("~") < 40
+
+
+@pytest.mark.parametrize("value", [True, 31_500.0, "31500"])
+def test_non_integer_price_is_rejected_strictly(value):
+    result = validate_prediction(with_target(original_payload(), 1, price=value))
+    assert isinstance(result, InvalidPayload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "label"),
+    [("market_cap", 10**19, "1개월 시총"), ("price", 10**16 + 1, "1개월 주가")],
+)
+def test_amount_above_domain_cap_rejected(field, value, label):
+    result = validate_prediction(with_target(original_payload(), 1, **{field: value}))
+    assert isinstance(result, InvalidAmount) and label in result.message
+
+
+def test_amount_at_domain_cap_accepted():
+    from ipobot.services.prediction_parser import MAX_AMOUNT
+
+    payload = with_target(original_payload(), 3, market_cap=MAX_AMOUNT, market_cap_text="1경")
+    assert isinstance(validate_prediction(payload), ParsedPrediction)
