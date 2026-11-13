@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 TEXT_MAX_LENGTH = 2000
 LLM_FAILED_TEXT = "예측 내용을 해석하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요"
 PREVIEW_POSTED_TEXT = "미리보기를 채널에 게시했습니다"
+PREVIEW_FAILED_TEXT = "미리보기를 게시하지 못했습니다. 잠시 후 /predict로 다시 제출해 주세요"
 
 
 class PredictModal(discord.ui.Modal, title="주가 예측 제출"):
@@ -69,5 +70,18 @@ class PredictCog(commands.Cog):
             return
         draft_id = self.store.put(result)
         view = ConfirmView(draft_id, user.id, self.store, self.service.confirm_draft)
+        # 순서가 중요하다: 미룬(thinking) 응답 뒤 첫 followup은 그 placeholder를 대체하고 defer의 ephemeral 플래그를
+        # 따른다(discord.py `defer` 문서: thinking 상태는 followup으로 없애야 한다). 미리보기를 먼저 보내면 작성자만 보는
+        # 메시지가 되므로, placeholder를 먼저 수정해 응답을 끝낸 뒤 미리보기를 별도 공개 followup으로 보낸다.
+        # 미리보기 전송이 실패하면 초안을 버리고 placeholder를 실패 안내로 되돌려 성공 문구가 남지 않게 한다.
         await interaction.edit_original_response(content=PREVIEW_POSTED_TEXT)
-        view.message = await interaction.followup.send(preview_text(result), view=view, wait=True)
+        try:
+            view.message = await interaction.followup.send(preview_text(result), view=view, wait=True)
+        except Exception:
+            log.exception("미리보기 게시 실패 draft=%s", draft_id)
+            self.store.expire(draft_id)
+            view.stop()
+            try:
+                await interaction.edit_original_response(content=PREVIEW_FAILED_TEXT)
+            except discord.HTTPException:
+                log.warning("미리보기 실패 안내 수정 실패 draft=%s", draft_id, exc_info=True)

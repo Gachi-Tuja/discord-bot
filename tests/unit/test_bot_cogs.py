@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, call
+
+import discord
 
 from ipobot.bot.cogs.ipo import IpoCog
-from ipobot.bot.cogs.predict import LLM_FAILED_TEXT, PREVIEW_POSTED_TEXT, PredictCog, PredictModal
+from ipobot.bot.cogs.predict import (
+    LLM_FAILED_TEXT,
+    PREVIEW_FAILED_TEXT,
+    PREVIEW_POSTED_TEXT,
+    PredictCog,
+    PredictModal,
+)
 from ipobot.bot.formatting import NO_UPCOMING_IPOS, REJECT_STOCK_NOT_FOUND
 from ipobot.bot.views import ConfirmView, DraftStore
 from ipobot.clock import KST
@@ -110,6 +118,23 @@ async def test_submission_draft_posts_preview_with_author_only_confirm_view():
     assert "123456" in text
     assert store.get(view.draft_id) is draft
     view.stop()
+
+
+async def test_preview_send_failure_expires_draft_and_replaces_success_text():
+    draft = make_draft()
+    cog, _, store = predict_cog(draft)
+    inter = interaction(1001)
+    inter.followup.send.side_effect = discord.HTTPException(MagicMock(status=500), "send failed")
+    await cog.handle_submission(inter, "text")  # 예외가 올라오지 않는다(안내는 placeholder에 남긴다)
+    (_, kwargs) = inter.followup.send.await_args
+    view = kwargs["view"]
+    assert view.is_finished()
+    assert store.get(view.draft_id) is None and not store.knows(view.draft_id)  # 만료로 정리
+    # 성공 안내가 실패 안내로 덮여, 마지막으로 보이는 문구가 모순되지 않는다.
+    assert inter.edit_original_response.await_args_list == [
+        call(content=PREVIEW_POSTED_TEXT),
+        call(content=PREVIEW_FAILED_TEXT),
+    ]
 
 
 async def test_long_submission_rejection_is_clipped_to_2000():
