@@ -9,7 +9,9 @@ from datetime import date, datetime
 
 from ipobot.clock import utc_iso
 from ipobot.db.connection import transaction
+from ipobot.domain.judging_policy import Adopt, Decision, Unjudgeable
 from ipobot.domain.models import DailyQuote, IpoListing, PredictionTarget, StockMasterEntry, SummaryRecord
+from ipobot.domain.scoring import ScoredEntry
 
 
 class RepositoryError(Exception):
@@ -71,42 +73,111 @@ class JudgmentRepo:
             raise NotFoundError(f"judgment {judgment_id} 없음")
         return row
 
-    def record_done(
+    def due_pending(self, now: datetime) -> list[sqlite3.Row]:
+        """판정 시도 대상(R13): pending이고 next_attempt_at ≤ now."""
+        return self._conn.execute(
+            "SELECT * FROM judgments WHERE status = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, id",
+            (utc_iso(now),),
+        ).fetchall()
+
+    def due_announcements(self, now: datetime) -> list[sqlite3.Row]:
+        """공지 대상(R22 2단계): 종결·미공지이고 next_attempt_at ≤ now."""
+        return self._conn.execute(
+            """
+            SELECT * FROM judgments
+             WHERE status IN ('done','unjudgeable') AND announced_at IS NULL AND next_attempt_at <= ?
+             ORDER BY next_attempt_at, id
+            """,
+            (utc_iso(now),),
+        ).fetchall()
+
+    def results(self, judgment_id: int) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT * FROM judgment_results WHERE judgment_id = ? ORDER BY rank, prediction_id",
+            (judgment_id,),
+        ).fetchall()
+
+    def apply_decision(
         self,
         judgment_id: int,
-        actual_trade_date: date,
-        actual_price: int,
-        actual_market_cap: int,
+        decision: Decision,
+        results: Sequence[ScoredEntry],
         now: datetime,
     ) -> None:
+        """판정 시도 결과를 트랜잭션 1개로 저장한다(R13 출력과 저장 2·3단계, Gate3 F3).
+
+        - `decision.closed_days`를 krx_closed_days에 기록한다(이미 있으면 유지). 서비스가 재조회로 확정한 날짜만 넘긴다.
+        - judge_trade_date·not_traded_days·unavailable_*·last_error·next_attempt_at을 갱신한다.
+        - Adopt면 status='done'·actual_*·judgment_results, Unjudgeable이면 status='unjudgeable'.
+          종결 전이의 next_attempt_at은 decide()가 now로 둔다(CRIT-P3-F5).
+        """
+        outcome = decision.outcome
+        if isinstance(outcome, Adopt):
+            if not results:
+                raise ValueError("done 전이에는 채점 결과가 필요합니다")
+            status = "done"
+            actual = (outcome.day.isoformat(), outcome.quote.close_price, outcome.quote.market_cap)
+        else:
+            if results:
+                raise ValueError("done이 아닌 전이에는 채점 결과를 저장할 수 없습니다")
+            status = "unjudgeable" if isinstance(outcome, Unjudgeable) else "pending"
+            actual = (None, None, None)
+        streak = decision.streak
+        ts = utc_iso(now)
         with transaction(self._conn) as c:
             self._require_status(c, judgment_id, "pending")
+            for mc in decision.closed_days:
+                c.execute(
+                    "INSERT INTO krx_closed_days (trade_date, evidence_date, detected_at) "
+                    "VALUES (?, ?, ?) ON CONFLICT (trade_date) DO NOTHING",
+                    (mc.day.isoformat(), mc.evidence.isoformat(), ts),
+                )
             c.execute(
                 """
                 UPDATE judgments
-                   SET status = 'done', actual_trade_date = ?, actual_price = ?, actual_market_cap = ?,
-                       judge_trade_date = ?, last_error = NULL,
-                       unavailable_since = NULL, unavailable_last_day = NULL, unavailable_days = 0,
+                   SET status = ?, judge_trade_date = ?, not_traded_days = ?,
+                       unavailable_since = ?, unavailable_last_day = ?, unavailable_days = ?,
+                       last_error = ?, next_attempt_at = ?,
+                       actual_trade_date = ?, actual_price = ?, actual_market_cap = ?,
                        updated_at = ?
                  WHERE id = ?
                 """,
                 (
-                    actual_trade_date.isoformat(),
-                    actual_price,
-                    actual_market_cap,
-                    actual_trade_date.isoformat(),
-                    utc_iso(now),
+                    status,
+                    decision.judge_trade_date.isoformat(),
+                    decision.not_traded_days,
+                    streak.since.isoformat() if streak.since else None,
+                    streak.last_day.isoformat() if streak.last_day else None,
+                    streak.days,
+                    decision.last_error,
+                    utc_iso(decision.next_attempt_at),
+                    *actual,
+                    ts,
                     judgment_id,
                 ),
             )
-
-    def record_unjudgeable(self, judgment_id: int, reason: str, now: datetime) -> None:
-        with transaction(self._conn) as c:
-            self._require_status(c, judgment_id, "pending")
-            c.execute(
-                "UPDATE judgments SET status = 'unjudgeable', last_error = ?, updated_at = ? WHERE id = ?",
-                (reason, utc_iso(now), judgment_id),
+            c.executemany(
+                """
+                INSERT INTO judgment_results
+                  (judgment_id, prediction_id, price_err_num, price_err_den, mcap_err_num, mcap_err_den, rank, is_solo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (judgment_id, r.prediction_id, *r.price_err_parts, *r.mcap_err_parts, r.rank, int(r.is_solo))
+                    for r in results
+                ],
             )
+
+    def mark_attempt_failed(self, judgment_id: int, error: str, next_attempt_at: datetime, now: datetime) -> None:
+        """판정 시도 중 예외(그룹 격리, R23): last_error·next_attempt_at만 바꾸고 streak은 그대로 둔다."""
+        with transaction(self._conn) as c:
+            cur = c.execute(
+                "UPDATE judgments SET last_error = ?, next_attempt_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (error, utc_iso(next_attempt_at), utc_iso(now), judgment_id),
+            )
+            if cur.rowcount == 0:
+                raise RepositoryError(f"judgment {judgment_id}: pending 행이 아닙니다")
 
     def mark_part_sent(
         self, judgment_id: int, part_index: int, message_id: str | None, now: datetime
@@ -140,14 +211,20 @@ class JudgmentRepo:
                 (message_id, utc_iso(now), judgment_id),
             )
 
-    def mark_announce_failed(self, judgment_id: int, error: str, now: datetime) -> None:
+    def mark_announce_failed(
+        self, judgment_id: int, error: str, next_attempt_at: datetime, now: datetime
+    ) -> None:
+        """공지 전송 실패(R22 4단계, Gate3 F2): announce_error와 재시도 시각을 기록한다. last_error(판정 사유)는 그대로다."""
         with transaction(self._conn) as c:
             cur = c.execute(
-                "UPDATE judgments SET announce_error = ?, updated_at = ? WHERE id = ?",
-                (error, utc_iso(now), judgment_id),
+                """
+                UPDATE judgments SET announce_error = ?, next_attempt_at = ?, updated_at = ?
+                 WHERE id = ? AND status IN ('done','unjudgeable') AND announced_at IS NULL
+                """,
+                (error, utc_iso(next_attempt_at), utc_iso(now), judgment_id),
             )
             if cur.rowcount == 0:
-                raise NotFoundError(f"judgment {judgment_id} 없음")
+                raise RepositoryError(f"judgment {judgment_id}: 공지 대기 중인 종결 행이 아닙니다")
 
     def mark_announced(self, judgment_id: int, total_parts: int, now: datetime) -> None:
         """전 파트 성공 후에만 announced_at을 기록한다."""

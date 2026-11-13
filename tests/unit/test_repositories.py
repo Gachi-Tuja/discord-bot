@@ -1,5 +1,6 @@
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from fractions import Fraction
 
 import pytest
 
@@ -13,6 +14,9 @@ from ipobot.db.repositories import (
     PartOrderError,
     RepositoryError,
 )
+from ipobot.domain.judging_policy import Adopt, Decision, MarketClosed, Unjudgeable, Wait
+from ipobot.domain.models import EMPTY_STREAK, DailyQuote, UnavailStreak
+from ipobot.domain.scoring import ScoredEntry
 
 NOW = datetime(2026, 11, 12, 9, 0, tzinfo=KST)
 
@@ -274,28 +278,109 @@ def test_get_missing(conn):
         JudgmentRepo(conn).get(42)
 
 
+D_TARGET = date(2026, 12, 10)
+LATER = datetime(2026, 12, 11, 9, 0, tzinfo=KST)
+
+
+def _quote(d=D_TARGET, close=25000, mcap=500_000_000_000):
+    return DailyQuote(d, "KOSDAQ", "0158S0", "가치토자바이오", close, close, 1000, mcap, 20_000_000)
+
+
+def _decision(outcome, *, day=D_TARGET, closed=(), streak=EMPTY_STREAK, last_error=None, nxt=LATER, nt=0):
+    return Decision(outcome, day, nt, tuple(closed), streak, last_error, nxt, False)
+
+
+def _scored(pid=1, rank=1, solo=True):
+    return ScoredEntry(pid, Fraction(1, 7), Fraction(2, 9), rank, solo)
+
+
 def _done(conn):
     repo = JudgmentRepo(conn)
     [jid] = repo.insert_pending([_new()], NOW)
-    repo.record_done(jid, date(2026, 12, 10), 25000, 500_000_000_000, NOW)
+    _insert(conn, "predictions", PREDICTION)
+    repo.apply_decision(jid, _decision(Adopt(D_TARGET, _quote()), nxt=NOW), [_scored()], NOW)
     return repo, jid
 
 
-def test_record_done_and_status_guard(conn):
-    repo, jid = _done(conn)
-    row = repo.get(jid)
-    assert (row["status"], row["actual_price"], row["actual_trade_date"]) == ("done", 25000, "2026-12-10")
-    with pytest.raises(RepositoryError):
-        repo.record_unjudgeable(jid, "x", NOW)
-
-
-def test_record_done_check_failure_leaves_row_unchanged(conn):
+def test_apply_decision_adopt_writes_done_results_and_closed_days(conn):
     repo = JudgmentRepo(conn)
     [jid] = repo.insert_pending([_new()], NOW)
-    with pytest.raises(sqlite3.IntegrityError):
-        repo.record_done(jid, date(2026, 12, 9), 25000, 1, NOW)  # target_date 이전
+    _insert(conn, "predictions", PREDICTION)
+    d11 = date(2026, 12, 11)
+    closed = [MarketClosed(D_TARGET, d11)]
+    repo.apply_decision(jid, _decision(Adopt(d11, _quote(d11)), day=d11, closed=closed, nxt=LATER, nt=1), [_scored()], LATER)
+    row = repo.get(jid)
+    assert (row["status"], row["actual_trade_date"], row["actual_price"]) == ("done", "2026-12-11", 25000)
+    assert row["judge_trade_date"] == "2026-12-11" and row["not_traded_days"] == 1
+    assert row["next_attempt_at"] == "2026-12-11T00:00:00+00:00" and row["last_error"] is None
+    [res] = repo.results(jid)
+    assert (res["price_err_num"], res["price_err_den"], res["mcap_err_num"], res["mcap_err_den"]) == (1, 7, 2, 9)
+    assert (res["rank"], res["is_solo"]) == (1, 1)
+    assert CalendarRepo(conn).closed_days() == {D_TARGET}
+    with pytest.raises(RepositoryError):  # 종결 후 재적용 금지
+        repo.apply_decision(jid, _decision(Unjudgeable("halted_suspected"), last_error="halted_suspected"), [], NOW)
+
+
+def test_apply_decision_wait_updates_streak_and_keeps_pending(conn):
+    repo = JudgmentRepo(conn)
+    [jid] = repo.insert_pending([_new()], NOW)
+    streak = UnavailStreak(D_TARGET, D_TARGET, 1)
+    repo.apply_decision(jid, _decision(Wait(D_TARGET), streak=streak, last_error="krx_fetch"), [], NOW)
+    row = repo.get(jid)
+    assert (row["status"], row["last_error"], row["unavailable_days"]) == ("pending", "krx_fetch", 1)
+    assert row["unavailable_since"] == row["unavailable_last_day"] == "2026-12-10"
+    assert row["next_attempt_at"] == "2026-12-11T00:00:00+00:00"
+    repo.apply_decision(jid, _decision(Unjudgeable("krx_unavailable"), streak=streak, last_error="krx_unavailable"), [], NOW)
+    row = repo.get(jid)
+    assert (row["status"], row["last_error"], row["unavailable_days"]) == ("unjudgeable", "krx_unavailable", 1)
+    assert row["actual_price"] is None
+
+
+def test_apply_decision_rejects_mismatched_results(conn):
+    repo = JudgmentRepo(conn)
+    [jid] = repo.insert_pending([_new()], NOW)
+    with pytest.raises(ValueError):
+        repo.apply_decision(jid, _decision(Adopt(D_TARGET, _quote())), [], NOW)
+    with pytest.raises(ValueError):
+        repo.apply_decision(jid, _decision(Wait(None)), [_scored()], NOW)
     assert repo.get(jid)["status"] == "pending"
+
+
+def test_apply_decision_check_failure_rolls_back_everything(conn):
+    repo = JudgmentRepo(conn)
+    [jid] = repo.insert_pending([_new()], NOW)
+    _insert(conn, "predictions", PREDICTION)
+    early = date(2026, 12, 9)  # target_date 이전 → done CHECK 위반
+    closed = [MarketClosed(date(2026, 12, 8), early)]
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.apply_decision(jid, _decision(Adopt(early, _quote(early)), day=early, closed=closed), [_scored()], NOW)
+    assert repo.get(jid)["status"] == "pending"
+    assert repo.results(jid) == []
+    assert CalendarRepo(conn).closed_days() == set()
     assert not conn.in_transaction
+
+
+def test_mark_attempt_failed_keeps_streak(conn):
+    repo = JudgmentRepo(conn)
+    [jid] = repo.insert_pending([_new()], NOW)
+    streak = UnavailStreak(D_TARGET, D_TARGET, 1)
+    repo.apply_decision(jid, _decision(Wait(D_TARGET), streak=streak, last_error="krx_fetch"), [], NOW)
+    repo.mark_attempt_failed(jid, "judging_error", LATER, NOW)
+    row = repo.get(jid)
+    assert (row["last_error"], row["unavailable_days"], row["next_attempt_at"]) == (
+        "judging_error", 1, "2026-12-11T00:00:00+00:00")
+
+
+def test_due_queries(conn):
+    repo = JudgmentRepo(conn)
+    [j1, j3] = repo.insert_pending([_new(1), _new(3)], NOW)
+    due_at = datetime.fromisoformat(repo.get(j1)["next_attempt_at"])
+    assert repo.due_pending(due_at - timedelta(seconds=1)) == []
+    assert {r["id"] for r in repo.due_pending(datetime(2028, 1, 1, tzinfo=KST))} == {j1, j3}
+    _insert(conn, "predictions", PREDICTION)
+    repo.apply_decision(j1, _decision(Adopt(D_TARGET, _quote()), nxt=NOW), [_scored()], NOW)
+    assert [r["id"] for r in repo.due_announcements(NOW)] == [j1]
+    assert j1 not in {r["id"] for r in repo.due_pending(datetime(2028, 1, 1, tzinfo=KST))}
 
 
 def test_mark_part_sent_in_order(conn):
@@ -344,8 +429,12 @@ def test_mark_announced_requires_all_parts(conn):
 
 def test_mark_announce_failed(conn):
     repo, jid = _done(conn)
-    repo.mark_announce_failed(jid, "send_ambiguous", NOW)
-    assert repo.get(jid)["announce_error"] == "send_ambiguous"
+    repo.mark_announce_failed(jid, "send_ambiguous", LATER, NOW)
+    row = repo.get(jid)
+    assert row["announce_error"] == "send_ambiguous"
+    assert row["next_attempt_at"] == "2026-12-11T00:00:00+00:00"  # 백오프(Gate3 F2)
+    assert row["last_error"] is None  # 판정 사유는 건드리지 않는다
+    assert repo.due_announcements(NOW) == []
     repo.mark_part_sent(jid, 0, "m0", NOW)
     assert repo.get(jid)["announce_error"] is None
 
@@ -366,7 +455,8 @@ def test_auth_delay_progress_and_single_notification(conn):
     with pytest.raises(PartOrderError):
         repo.mark_auth_delay_notified(jid, 1, NOW)
     # 이후 정상 판정이 되어도 값은 보존된다(감사용)
-    repo.record_done(jid, date(2026, 12, 10), 25000, 500_000_000_000, NOW)
+    _insert(conn, "predictions", PREDICTION)
+    repo.apply_decision(jid, _decision(Adopt(D_TARGET, _quote())), [_scored()], NOW)
     assert repo.get(jid)["auth_delay_notified_at"] == "2026-11-12T00:00:00+00:00"
 
 

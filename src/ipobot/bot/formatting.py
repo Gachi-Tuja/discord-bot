@@ -43,6 +43,7 @@ UNJUDGEABLE_REASON_TEXT = {
     "halted_suspected": "거래정지 또는 무거래 추정",
     "delisted_suspected": "상장폐지 추정",
     "krx_unavailable": "KRX 시세를 장기간 조회할 수 없음",
+    "invalid_actual": "실제 시세가 0 이하로 조회되어 오차를 계산할 수 없음",
 }
 
 RESULT_COLOR = 0x2ECC71
