@@ -1,4 +1,5 @@
 import sqlite3
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from fractions import Fraction
 
@@ -468,6 +469,34 @@ def test_auth_delay_progress_and_single_notification(conn):
     # 이후 정상 판정이 되어도 값은 보존된다(감사용)
     repo.apply_decision(jid, _decision(Adopt(D_TARGET, _quote())), [_scored()], NOW)
     assert repo.get(jid)["auth_delay_notified_at"] == "2026-11-12T00:00:00+00:00"
+
+
+def test_auth_notice_state_survives_overwritten_last_error(conn):
+    # 안내 필요 상태는 last_error가 아니라 전용 컬럼에 저장된다. 이후 판정 예외가 last_error를 덮어써도,
+    # auth를 관측했지만 last_error가 다른 kind인 Wait이어도, 재시작 복원 대상에 남아야 한다(Part A1).
+    repo, [j1, j3] = _seed(conn, horizons=(1, 3))
+    auth_wait = replace(_decision(Wait(D_TARGET), last_error="krx_auth"), auth_seen=True)
+    repo.apply_decision(j1, auth_wait, [], NOW)
+    repo.mark_attempt_failed(j1, "judging", LATER, NOW)
+    repo.apply_decision(j3, replace(_decision(Wait(D_TARGET), last_error="krx_fetch"), auth_seen=True), [], NOW)
+    assert repo.get(j1)["last_error"] == "judging"
+    assert repo.pending_auth_notice_ids() == [j1, j3]
+    first = repo.get(j1)["auth_delay_due_at"]
+    repo.apply_decision(j1, auth_wait, [], LATER)  # 재관측해도 처음 시각을 유지한다
+    assert repo.get(j1)["auth_delay_due_at"] == first
+
+    # 조건이 사라지면(auth 미관측 Wait) 서비스 대기열처럼 지운다.
+    repo.apply_decision(j3, _decision(Wait(D_TARGET), last_error="krx_auth"), [], NOW)
+    assert repo.get(j3)["auth_delay_due_at"] is None
+    assert repo.pending_auth_notice_ids() == [j1]
+
+    # 안내를 마치면 지우고, 이후 auth Wait이 와도 다시 세우지 않는다.
+    repo.mark_auth_delay_part_sent(j1, 0, NOW)
+    repo.mark_auth_delay_notified(j1, 1, NOW)
+    assert repo.get(j1)["auth_delay_due_at"] is None
+    repo.apply_decision(j1, auth_wait, [], NOW)
+    assert repo.get(j1)["auth_delay_due_at"] is None
+    assert repo.pending_auth_notice_ids() == []
 
 
 # ---- CalendarRepo ----------------------------------------------------------

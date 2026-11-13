@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from ipobot.clock import utc_iso
 from ipobot.db.connection import transaction
-from ipobot.domain.judging_policy import LAST_ERROR_BY_FETCH_KIND, Adopt, Decision, Unjudgeable
+from ipobot.domain.judging_policy import Adopt, Decision, Unjudgeable, Wait
 from ipobot.domain.models import DailyQuote, IpoListing, PredictionTarget, StockMasterEntry, SummaryRecord
 from ipobot.domain.scoring import ScoredEntry
 
@@ -55,18 +55,17 @@ class JudgmentRepo:
         ).fetchall()
 
     def pending_auth_notice_ids(self) -> list[int]:
-        """지연 안내가 남은 판정(Part A1): pending·미안내이면서 마지막 시도가 인증 오류였거나 안내를 일부 보낸 행.
+        """지연 안내가 남은 판정(Part A1): pending·미안내이면서 안내 필요 상태(`auth_delay_due_at`)이거나 안내를 일부 보낸 행.
 
-        재시작 후 메모리 대기열을 DB에서 되살리는 데 쓴다.
+        재시작 후 메모리 대기열을 DB에서 되살리는 데 쓴다. last_error는 이후 시도가 덮어쓰므로 근거로 쓰지 않는다.
         """
         rows = self._conn.execute(
             """
             SELECT id FROM judgments
              WHERE status = 'pending' AND auth_delay_notified_at IS NULL
-               AND (last_error = ? OR auth_delay_parts_sent > 0)
+               AND (auth_delay_due_at IS NOT NULL OR auth_delay_parts_sent > 0)
              ORDER BY id
-            """,
-            (LAST_ERROR_BY_FETCH_KIND["auth"],),
+            """
         ).fetchall()
         return [row["id"] for row in rows]
 
@@ -98,6 +97,8 @@ class JudgmentRepo:
 
         - `decision.closed_days`를 krx_closed_days에 기록한다(이미 있으면 유지). 서비스가 재조회로 확정한 날짜만 넘긴다.
         - judge_trade_date·not_traded_days·unavailable_*·last_error·next_attempt_at을 갱신한다.
+        - 지연 안내 필요 상태(Part A1): Wait이고 이번 시도에서 auth를 관측했으며 미안내면 `auth_delay_due_at`을 세우고
+          (이미 있으면 유지), 아니면 지운다. 서비스의 메모리 대기열과 같은 조건이라 재시작 후 복원 근거가 된다.
         - Adopt면 status='done'·actual_*·judgment_results, Unjudgeable이면 status='unjudgeable'.
           종결 전이의 next_attempt_at은 decide()가 now로 둔다(CRIT-P3-F5).
         """
@@ -112,6 +113,7 @@ class JudgmentRepo:
                 raise ValueError("done이 아닌 전이에는 채점 결과를 저장할 수 없습니다")
             status = "unjudgeable" if isinstance(outcome, Unjudgeable) else "pending"
             actual = (None, None, None)
+        auth_notice = isinstance(outcome, Wait) and decision.auth_seen
         streak = decision.streak
         ts = utc_iso(now)
         with transaction(self._conn) as c:
@@ -129,6 +131,8 @@ class JudgmentRepo:
                        unavailable_since = ?, unavailable_last_day = ?, unavailable_days = ?,
                        last_error = ?, next_attempt_at = ?,
                        actual_trade_date = ?, actual_price = ?, actual_market_cap = ?,
+                       auth_delay_due_at = CASE WHEN ? AND auth_delay_notified_at IS NULL
+                                                THEN COALESCE(auth_delay_due_at, ?) ELSE NULL END,
                        updated_at = ?
                  WHERE id = ?
                 """,
@@ -142,6 +146,8 @@ class JudgmentRepo:
                     decision.last_error,
                     utc_iso(decision.next_attempt_at),
                     *actual,
+                    int(auth_notice),
+                    ts,
                     ts,
                     judgment_id,
                 ),
@@ -269,7 +275,8 @@ class JudgmentRepo:
                     f"{row['auth_delay_parts_sent']}개만 전송됨"
                 )
             c.execute(
-                "UPDATE judgments SET auth_delay_notified_at = ?, updated_at = ? WHERE id = ?",
+                "UPDATE judgments SET auth_delay_notified_at = ?, auth_delay_due_at = NULL, updated_at = ? "
+                "WHERE id = ?",
                 (utc_iso(now), utc_iso(now), judgment_id),
             )
 

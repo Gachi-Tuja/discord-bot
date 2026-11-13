@@ -256,4 +256,4 @@ DELETE FROM krx_closed_days WHERE trade_date = 'YYYY-MM-DD';
 
 - 테스트: `uv run pytest -q`. `tests/integration/test_end_to_end.py`가 실제 sqlite·서비스 배선과 fake KRX/DART/LLM/디스코드 채널로 재시작·크래시·장애 시나리오를 검증한다.
 - 설계 결정: `docs/adr/`.
-- 스키마: `src/ipobot/db/migrations/0001_init.sql`.
+- 스키마: `src/ipobot/db/migrations/`(`0001_init.sql`, `0002_auth_delay_due_at.sql`). 시작 시 `PRAGMA user_version`보다 큰 번호를 순서대로 적용한다.
