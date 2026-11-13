@@ -32,7 +32,8 @@ class DailyQuote:
 class RowAnomaly:
     """KRX 응답에서 필수 필드(TDD_CLSPRC·ACC_TRDVOL·MKTCAP·LIST_SHRS·ISU_CD)가 결측·비숫자인 행.
 
-    읽을 수 있었던 값은 채운다(halted 판정은 거래량·종가만 본다). `stock_code`가 None이면 코드를 알 수 없다.
+    읽을 수 있었던 거래량·종가는 로그 문맥용으로만 채운다. 분류는 값과 무관하게 항상 data_anomaly다.
+    `stock_code`가 None이면 코드를 알 수 없다.
     """
 
     market: Market

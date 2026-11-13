@@ -117,10 +117,8 @@ class QuoteService:
             if quote.market_cap <= 0:
                 return FetchError("data_anomaly")
             return Traded(quote)
-        anomaly = day.anomalies.get(code)
-        if anomaly is not None:
-            if anomaly.trade_volume == 0 or anomaly.close_price == 0:
-                return NotTraded("halted")
+        if code in day.anomalies:
+            # 필수 필드가 깨진 행은 거래량·종가가 0이어도 halted로 보지 않는다(Part B §8 1단계).
             return FetchError("data_anomaly")
         return None
 
@@ -137,7 +135,17 @@ class QuoteService:
             if found is None:
                 continue
             if isinstance(found, FetchError):
-                log.warning("KRX data_anomaly code=%s date=%s market=%s", code, trade_date, market)
+                day = loaded[market]
+                anomaly = day.anomalies.get(code) if isinstance(day, _Day) else None
+                log.warning(
+                    "KRX data_anomaly code=%s date=%s market=%s reason=%s volume=%s close=%s",
+                    code,
+                    trade_date,
+                    market,
+                    anomaly.reason if anomaly else "market_cap<=0",
+                    anomaly.trade_volume if anomaly else None,
+                    anomaly.close_price if anomaly else None,
+                )
             if isinstance(found, Traded) and hint is not None and market != hint:
                 log.info("market_moved code=%s date=%s hint=%s actual=%s", code, trade_date, hint, market)
             return found

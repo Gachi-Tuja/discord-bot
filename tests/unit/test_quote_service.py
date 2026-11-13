@@ -144,6 +144,20 @@ async def test_missing_mktcap_key_anomaly_other_row_traded(conn, fake_clock):
     assert fake.calls.count(("KOSDAQ", D)) == 2
 
 
+@pytest.mark.parametrize(
+    ("volume", "close"),
+    [(0, 5_000), (0, None), (None, 0), (0, 0)],
+)
+async def test_anomaly_row_with_zero_volume_is_data_anomaly_not_halted(conn, fake_clock, caplog, volume, close):
+    """Gate3 F1: 이상 행은 거래량·종가가 0이어도 NotTraded('halted')가 아니다."""
+    anomaly = RowAnomaly("KOSDAQ", "222220", "MKTCAP 결측", trade_volume=volume, close_price=close)
+    s, _ = svc(conn, fake_clock, {"KOSDAQ": ([q("247540", "KOSDAQ")], [anomaly])})
+    with caplog.at_level(logging.WARNING):
+        assert await s.day_obs("222220", D, "KOSDAQ") == FetchError("data_anomaly")
+    assert "MKTCAP 결측" in caplog.text
+    assert market_days(conn) == set()
+
+
 async def test_unknown_code_anomaly_blocks_absent(conn, fake_clock):
     anomaly = RowAnomaly("KOSPI", None, "ISU_CD 결측")
     s, _ = svc(
