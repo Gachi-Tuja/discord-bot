@@ -654,3 +654,83 @@ class SummaryRepo:
                 "retry_after = excluded.retry_after, created_at = excluded.created_at",
                 (rcept_no, corp_code, status, summary, retry_after, utc_iso(now)),
             )
+
+
+class JobRunRepo:
+    """`job_runs`(R21). done = 전 파트 전송 성공, failed = 수집·전송 실패 또는 전송 중(선기록)."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def get(self, job_key: str) -> sqlite3.Row | None:
+        return self._conn.execute("SELECT * FROM job_runs WHERE job_key = ?", (job_key,)).fetchone()
+
+    def record_failure(self, job_key: str, error: str, now: datetime) -> None:
+        """수집 실패 upsert: failed, last_error, attempts += 1, ran_at = now. done 행은 바꾸지 않는다."""
+        self._upsert_failed(job_key, error, None, now)
+
+    def begin_sending(self, job_key: str, payload_json: str, now: datetime) -> None:
+        """전송 전 선기록(R15 3단계): failed/'sending', payload_json, attempts += 1, ran_at = now.
+
+        이미 저장된 payload_json은 바꾸지 않는다(재시도 간 내용·분할 고정).
+        """
+        self._upsert_failed(job_key, "sending", payload_json, now)
+
+    def _upsert_failed(self, job_key: str, error: str, payload_json: str | None, now: datetime) -> None:
+        with transaction(self._conn) as c:
+            cur = c.execute(
+                """
+                INSERT INTO job_runs (job_key, status, attempts, ran_at, last_error, payload_json)
+                VALUES (?, 'failed', 1, ?, ?, ?)
+                ON CONFLICT (job_key) DO UPDATE
+                   SET status = 'failed',
+                       attempts = job_runs.attempts + 1,
+                       ran_at = excluded.ran_at,
+                       last_error = excluded.last_error,
+                       payload_json = COALESCE(job_runs.payload_json, excluded.payload_json)
+                 WHERE job_runs.status = 'failed'
+                """,
+                (job_key, utc_iso(now), error, payload_json),
+            )
+            if cur.rowcount == 0:
+                raise RepositoryError(f"job {job_key}: 이미 done입니다")
+
+    def mark_part_sent(self, job_key: str, part_index: int, message_id: str | None) -> None:
+        """파트 `part_index` 전송 성공. `part_index == parts_sent`일 때만 갱신하고 0번 파트는 message_id가 필수다."""
+        with transaction(self._conn) as c:
+            row = c.execute("SELECT parts_sent FROM job_runs WHERE job_key = ?", (job_key,)).fetchone()
+            if row is None:
+                raise NotFoundError(f"job {job_key} 없음")
+            if part_index != row["parts_sent"]:
+                raise PartOrderError(
+                    f"job {job_key}: 파트 {part_index} 기록 요청, 진행 카운터는 {row['parts_sent']}"
+                )
+            if part_index == 0 and not message_id:
+                raise ValueError("0번 파트는 message_id가 필요합니다")
+            c.execute(
+                """
+                UPDATE job_runs
+                   SET parts_sent = parts_sent + 1, message_id = COALESCE(message_id, ?)
+                 WHERE job_key = ?
+                """,
+                (message_id, job_key),
+            )
+
+    def mark_done(self, job_key: str, total_parts: int) -> None:
+        """전 파트 성공 후에만 done을 기록한다."""
+        with transaction(self._conn) as c:
+            row = c.execute("SELECT parts_sent FROM job_runs WHERE job_key = ?", (job_key,)).fetchone()
+            if row is None:
+                raise NotFoundError(f"job {job_key} 없음")
+            if row["parts_sent"] != total_parts:
+                raise PartOrderError(f"job {job_key}: {total_parts}파트 중 {row['parts_sent']}개만 전송됨")
+            c.execute("UPDATE job_runs SET status = 'done', last_error = NULL WHERE job_key = ?", (job_key,))
+
+    def mark_send_failed(self, job_key: str, error: str) -> None:
+        """전송 실패 코드를 기록한다(status는 선기록의 failed 그대로, attempts·ran_at 불변)."""
+        with transaction(self._conn) as c:
+            cur = c.execute(
+                "UPDATE job_runs SET last_error = ? WHERE job_key = ? AND status = 'failed'", (error, job_key)
+            )
+            if cur.rowcount == 0:
+                raise RepositoryError(f"job {job_key}: failed 행이 아닙니다")
