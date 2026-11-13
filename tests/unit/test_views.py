@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -11,6 +12,7 @@ import pytest
 
 from ipobot.bot.formatting import CONFIRM_RESULT_SCHEDULE, REJECT_DUPLICATE, REJECT_KRX_UNPUBLISHED
 from ipobot.bot.views import (
+    BUSY_TEXT,
     CANCELLED_TEXT,
     EXPIRED_TEXT,
     NOT_AUTHOR_TEXT,
@@ -175,3 +177,40 @@ def test_preview_lists_base_four_horizons_warnings_and_schedule():
 @pytest.mark.parametrize("custom_id", ["ipobot:", "ipobot:confirm", "ipobot:confirm:"])
 def test_draft_id_of_rejects_malformed(custom_id):
     assert draft_id_of(custom_id) is None
+
+
+async def test_cancel_while_confirm_in_flight_is_refused_and_prediction_saved():
+    gate = asyncio.Event()
+    saved = []
+
+    async def confirm(draft):
+        await gate.wait()
+        saved.append(draft)
+        return Confirmed(7, draft)
+
+    view, store, draft_id, _ = make_view(confirm)
+    confirming, cancelling = interaction(), interaction()
+    task = asyncio.create_task(view.on_confirm(confirming))
+    await asyncio.sleep(0)
+    await view.on_cancel(cancelling)
+    cancelling.response.send_message.assert_awaited_once_with(BUSY_TEXT, ephemeral=True)
+    cancelling.response.edit_message.assert_not_awaited()
+    gate.set()
+    await task
+    assert len(saved) == 1
+    (text,), _ = confirming.followup.send.await_args
+    assert CONFIRM_RESULT_SCHEDULE in text
+
+
+async def test_confirm_after_cancel_does_not_save():
+    view, store, draft_id, confirm = make_view()
+    await view.on_cancel(interaction())
+    later = interaction()
+    await view.on_confirm(later)
+    confirm.assert_not_awaited()
+    later.response.send_message.assert_awaited_once_with(EXPIRED_TEXT, ephemeral=True)
+    # 이미 끝난 초안에 대한 두 번째 취소도 메시지를 「취소했습니다」로 바꾸지 않는다.
+    again = interaction()
+    await view.on_cancel(again)
+    again.response.edit_message.assert_not_awaited()
+    again.response.send_message.assert_awaited_once_with(EXPIRED_TEXT, ephemeral=True)

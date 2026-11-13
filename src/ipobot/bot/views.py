@@ -31,6 +31,7 @@ EXPIRED_TEXT = "만료됨. /predict로 다시 제출해 주세요"
 EXPIRED_PREVIEW_SUFFIX = "⌛ 만료됨. 저장되지 않았습니다"
 NOT_AUTHOR_TEXT = "작성자만 확인·취소할 수 있습니다"
 CANCELLED_TEXT = "취소했습니다. 예측은 저장되지 않았습니다"
+BUSY_TEXT = "처리 중입니다"
 REASON_PREVIEW_LIMIT = 500
 # 다시 눌러 볼 수 있는 일시적 거부. 이 경우 초안과 버튼을 유지한다.
 RETRYABLE_REJECTIONS = frozenset({REJECT_KRX_FAILED, REJECT_KRX_UNPUBLISHED})
@@ -156,7 +157,7 @@ class ConfirmView(discord.ui.View):
     async def on_confirm(self, interaction: discord.Interaction) -> None:
         draft = self.store.get(self.draft_id)
         if draft is None or self._busy:
-            await interaction.response.send_message(EXPIRED_TEXT if draft is None else "처리 중입니다", ephemeral=True)
+            await interaction.response.send_message(EXPIRED_TEXT if draft is None else BUSY_TEXT, ephemeral=True)
             return
         self._busy = True
         await interaction.response.defer()
@@ -181,6 +182,14 @@ class ConfirmView(discord.ui.View):
             await interaction.followup.send(result.message, ephemeral=True)
 
     async def on_cancel(self, interaction: discord.Interaction) -> None:
+        # 확정이 진행 중이면 취소를 거부한다(저장 여부를 거짓으로 알리지 않는다). 그렇지 않으면 수정 전에
+        # 먼저 초안을 정리해, 응답을 기다리는 사이에 들어온 확인 클릭이 저장하지 못하게 한다.
+        if self._busy:
+            await interaction.response.send_message(BUSY_TEXT, ephemeral=True)
+            return
+        if self.store.get(self.draft_id) is None:
+            await interaction.response.send_message(EXPIRED_TEXT, ephemeral=True)
+            return
         self.store.resolve(self.draft_id)
         self.stop()
         await interaction.response.edit_message(content=CANCELLED_TEXT, view=None)
