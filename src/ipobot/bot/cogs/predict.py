@@ -12,6 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ipobot.bot.errors import report_interaction_error
 from ipobot.bot.views import ConfirmView, DraftStore, preview_text
 from ipobot.services.predictions import Draft, PredictionService
 from ipobot.services.summaries import LlmError
@@ -37,6 +38,9 @@ class PredictModal(discord.ui.Modal, title="주가 예측 제출"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await self._on_text(interaction, self.text.value)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        await report_interaction_error(interaction, error)
 
 
 class PredictCog(commands.Cog):

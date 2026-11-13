@@ -22,6 +22,7 @@ from ipobot.adapters.llm import AnthropicLlmClient
 from ipobot.bot.cogs.ipo import KOREAN_COMMAND_NAMES, IpoCog
 from ipobot.bot.cogs.predict import PredictCog
 from ipobot.bot.cogs.scheduler import Job, SchedulerCog
+from ipobot.bot.errors import report_interaction_error
 from ipobot.bot.views import DraftStore, expired_fallback
 from ipobot.clock import Clock, SystemClock
 from ipobot.config import Settings, load_settings
@@ -139,6 +140,7 @@ class IpoBot(commands.Bot):
         alerts.set_default(OperatorAlerts(self.clock))  # Gate3 F8: 주입 시계의 영업일 기준 경보
         self.drafts = DraftStore()
         self._services = services
+        self.tree.on_error = self.on_app_command_error
 
     @property
     def services(self) -> Services:
@@ -171,6 +173,11 @@ class IpoBot(commands.Bot):
         ipo_channel = await self.resolve_channel(self.settings.ipo_channel_id)
         result_channel = await self.resolve_channel(self.settings.result_channel_id)
         return self.services.scheduler_jobs(ipo_channel, result_channel)
+
+    async def on_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        await report_interaction_error(interaction, error)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         await expired_fallback(interaction, self.drafts)
