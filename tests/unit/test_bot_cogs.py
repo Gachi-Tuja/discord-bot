@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from ipobot.bot.cogs.ipo import IpoCog
-from ipobot.bot.cogs.predict import LLM_FAILED_TEXT, PredictCog, PredictModal
+from ipobot.bot.cogs.predict import LLM_FAILED_TEXT, PREVIEW_POSTED_TEXT, PredictCog, PredictModal
 from ipobot.bot.formatting import NO_UPCOMING_IPOS, REJECT_STOCK_NOT_FOUND
 from ipobot.bot.views import ConfirmView, DraftStore
 from ipobot.clock import KST
@@ -23,6 +23,7 @@ def interaction(user_id: int = 1001) -> SimpleNamespace:
         user=SimpleNamespace(id=user_id, display_name="작성자"),
         response=SimpleNamespace(defer=AsyncMock(), send_modal=AsyncMock()),
         followup=SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=1, content="x"))),
+        edit_original_response=AsyncMock(),
     )
 
 
@@ -79,14 +80,16 @@ async def test_submission_rejected_is_ephemeral():
     cog, _, store = predict_cog(Rejected(REJECT_STOCK_NOT_FOUND))
     inter = interaction()
     await cog.handle_submission(inter, "text")
-    inter.response.defer.assert_awaited_once_with(thinking=True)
+    inter.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
     inter.followup.send.assert_awaited_once_with(REJECT_STOCK_NOT_FOUND, ephemeral=True)
+    inter.edit_original_response.assert_not_awaited()
 
 
 async def test_submission_llm_error_is_reported():
     cog, _, _ = predict_cog(side_effect=LlmError("x"))
     inter = interaction()
     await cog.handle_submission(inter, "text")
+    inter.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
     inter.followup.send.assert_awaited_once_with(LLM_FAILED_TEXT, ephemeral=True)
 
 
@@ -95,7 +98,12 @@ async def test_submission_draft_posts_preview_with_author_only_confirm_view():
     cog, service, store = predict_cog(draft)
     inter = interaction(1001)
     await cog.handle_submission(inter, "text")
+    inter.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+    # 미룬(ephemeral) 응답은 안내로 바꾸고, 미리보기는 별도의 공개 메시지로 게시한다.
+    inter.edit_original_response.assert_awaited_once_with(content=PREVIEW_POSTED_TEXT)
+    inter.followup.send.assert_awaited_once()
     (text,), kwargs = inter.followup.send.await_args
+    assert "ephemeral" not in kwargs
     view = kwargs["view"]
     assert isinstance(view, ConfirmView) and view.author_id == 1001
     assert kwargs["wait"] is True and view.message is inter.followup.send.return_value
