@@ -28,6 +28,34 @@ class DailyQuote:
     listed_shares: int
 
 
+@dataclass(frozen=True)
+class RowAnomaly:
+    """KRX 응답에서 필수 필드(TDD_CLSPRC·ACC_TRDVOL·MKTCAP·LIST_SHRS·ISU_CD)가 결측·비숫자인 행.
+
+    읽을 수 있었던 값은 채운다(halted 판정은 거래량·종가만 본다). `stock_code`가 None이면 코드를 알 수 없다.
+    """
+
+    market: Market
+    stock_code: str | None
+    reason: str
+    trade_volume: int | None = None
+    close_price: int | None = None
+
+
+@dataclass(frozen=True)
+class MarketDayRows:
+    """한 시장·한 일자 KRX 응답의 파싱 결과. 둘 다 비면 빈 응답(미공개 또는 휴장)."""
+
+    trade_date: date
+    market: Market
+    quotes: tuple[DailyQuote, ...] = ()
+    anomalies: tuple[RowAnomaly, ...] = ()
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.quotes and not self.anomalies
+
+
 # --- DayObs: 한 종목·한 거래일의 관측(R9) ---
 
 

@@ -9,6 +9,7 @@ from datetime import date, datetime
 
 from ipobot.clock import utc_iso
 from ipobot.db.connection import transaction
+from ipobot.domain.models import DailyQuote
 
 
 class RepositoryError(Exception):
@@ -246,3 +247,68 @@ class CalendarRepo:
                 (trade_date.isoformat(), evidence_date.isoformat(), utc_iso(now)),
             )
             return cur.rowcount == 1
+
+
+class QuoteCacheRepo:
+    """KRX 공개 시장-일자 영구 캐시: krx_market_days + krx_daily_quotes."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def load_day(self, trade_date: date, market: str) -> list[DailyQuote] | None:
+        """저장된 시장-일자면 행 목록, 아니면 None."""
+        day = self._conn.execute(
+            "SELECT 1 FROM krx_market_days WHERE trade_date = ? AND market = ?",
+            (trade_date.isoformat(), market),
+        ).fetchone()
+        if day is None:
+            return None
+        rows = self._conn.execute(
+            "SELECT * FROM krx_daily_quotes WHERE trade_date = ? AND market = ? ORDER BY stock_code",
+            (trade_date.isoformat(), market),
+        ).fetchall()
+        return [
+            DailyQuote(
+                trade_date=date.fromisoformat(r["trade_date"]),
+                market=r["market"],
+                stock_code=r["stock_code"],
+                corp_name=r["corp_name"],
+                close_price=r["close_price"],
+                open_price=r["open_price"],
+                trade_volume=r["trade_volume"],
+                market_cap=r["market_cap"],
+                listed_shares=r["listed_shares"],
+            )
+            for r in rows
+        ]
+
+    def save_day(self, trade_date: date, market: str, quotes: Sequence[DailyQuote], now: datetime) -> None:
+        """비어 있지 않은 시장-일자를 한 트랜잭션으로 저장한다. 이미 있으면 그대로 둔다."""
+        if not quotes:
+            raise ValueError("빈 시장-일자는 저장하지 않습니다")
+        with transaction(self._conn) as c:
+            cur = c.execute(
+                "INSERT INTO krx_market_days (trade_date, market, row_count, fetched_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (trade_date, market) DO NOTHING",
+                (trade_date.isoformat(), market, len(quotes), utc_iso(now)),
+            )
+            if cur.rowcount != 1:
+                return
+            c.executemany(
+                "INSERT INTO krx_daily_quotes (trade_date, market, stock_code, corp_name, close_price, "
+                "open_price, trade_volume, market_cap, listed_shares) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        q.trade_date.isoformat(),
+                        q.market,
+                        q.stock_code,
+                        q.corp_name,
+                        q.close_price,
+                        q.open_price,
+                        q.trade_volume,
+                        q.market_cap,
+                        q.listed_shares,
+                    )
+                    for q in quotes
+                ],
+            )
