@@ -256,6 +256,7 @@ def test_amount_warnings_truncate_echoed_text():
     assert "3" * 40 + "…" in mismatch and "3" * 41 not in mismatch
     assert len(mismatch) < 100 and len(unparseable) < 100
     assert amount_mismatch_warning(" 3만원 ", 30_000) == "금액 해석 불일치: 텍스트 3만원 ↔ 해석 3만원"
+    assert amount_unparseable_warning("가" * 40) == f"⚠️ 금액 텍스트를 해석하지 못했습니다: {'가' * 40} (확정은 가능)"
 
 
 def test_clip_content_bounds_to_2000():

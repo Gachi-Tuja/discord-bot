@@ -56,7 +56,7 @@ def test_missing_required_message_format(base_env):
 def test_clock_timezone_comes_from_config():
     from ipobot import clock
 
-    assert clock.KST.key == config.TIMEZONE_NAME
+    assert clock.KST.key == config.TIMEZONE_NAME == "Asia/Seoul"
 
 
 @pytest.mark.parametrize("name", REQUIRED_NAMES)

@@ -105,8 +105,8 @@ def clip_content(text: str, limit: int = CONTENT_LIMIT) -> str:
 
 
 def _echo_amount(text: str) -> str:
-    text = text.strip()
-    return text if len(text) <= AMOUNT_ECHO_LIMIT else text[:AMOUNT_ECHO_LIMIT] + ELLIPSIS
+    """금액 텍스트를 최대 AMOUNT_ECHO_LIMIT자 + 「…」로 되돌려 보인다."""
+    return _truncate(text.strip(), AMOUNT_ECHO_LIMIT + len(ELLIPSIS))
 
 
 def format_won(value: int) -> str:

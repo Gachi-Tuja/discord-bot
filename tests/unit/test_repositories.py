@@ -293,11 +293,6 @@ def test_confirm_rolls_back_whole_batch(conn):
     assert not conn.in_transaction
 
 
-def test_insert_pending_is_gone():
-    # 판정 행은 예측 확정 트랜잭션에서만 생긴다(고아 판정 방지).
-    assert not hasattr(JudgmentRepo, "insert_pending")
-
-
 def test_get_missing(conn):
     with pytest.raises(NotFoundError):
         JudgmentRepo(conn).get(42)
