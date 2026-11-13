@@ -19,5 +19,11 @@ async def report_interaction_error(interaction: discord.Interaction, error: Base
             await interaction.followup.send(INTERACTION_FAILED_TEXT, ephemeral=True)
         else:
             await interaction.response.send_message(INTERACTION_FAILED_TEXT, ephemeral=True)
+    except discord.InteractionResponded:
+        # is_done() 확인과 응답 사이에 다른 경로가 먼저 응답했다(ClientException). followup으로 다시 보낸다.
+        try:
+            await interaction.followup.send(INTERACTION_FAILED_TEXT, ephemeral=True)
+        except discord.HTTPException:
+            log.warning("실패 안내 전송 실패", exc_info=True)
     except discord.HTTPException:
         log.warning("실패 안내 전송 실패", exc_info=True)

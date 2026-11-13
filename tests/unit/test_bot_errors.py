@@ -6,6 +6,7 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
 from discord import app_commands
 
 from ipobot.bot.app import IpoBot
@@ -42,6 +43,24 @@ async def test_http_exception_while_reporting_is_swallowed():
     inter = interaction(done=True, send_error=forbidden())
     await report_interaction_error(inter, RuntimeError("boom"))  # 예외가 올라오지 않는다
     inter.followup.send.assert_awaited_once()
+
+
+async def test_interaction_responded_race_falls_back_to_followup():
+    # is_done()는 False였지만 그 사이 다른 경로가 응답해 send_message가 InteractionResponded를 낸다.
+    inter = interaction(done=False)
+    inter.response.send_message.side_effect = discord.InteractionResponded(MagicMock())
+    await report_interaction_error(inter, RuntimeError("boom"))
+    inter.followup.send.assert_awaited_once_with(INTERACTION_FAILED_TEXT, ephemeral=True)
+
+
+async def test_interaction_responded_then_followup_http_failure_is_swallowed(caplog):
+    inter = interaction(done=False)
+    inter.response.send_message.side_effect = discord.InteractionResponded(MagicMock())
+    inter.followup.send.side_effect = forbidden()
+    with caplog.at_level(logging.WARNING, logger="ipobot.bot.errors"):
+        await report_interaction_error(inter, RuntimeError("boom"))  # 예외가 올라오지 않는다
+    inter.followup.send.assert_awaited_once()
+    assert any(r.levelno == logging.WARNING for r in caplog.records if r.name == "ipobot.bot.errors")
 
 
 async def test_predict_modal_on_error_reports():
