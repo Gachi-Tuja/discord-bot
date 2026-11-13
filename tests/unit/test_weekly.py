@@ -10,10 +10,11 @@ import pytest
 from ipobot.bot.formatting import NO_UPCOMING_IPOS, parts_from_json
 from ipobot.clock import KST, utc_iso
 from ipobot.db.connection import open_database
-from ipobot.db.repositories import JobRunRepo, PartOrderError, RepositoryError
+from ipobot.db.repositories import JOB_LAST_ERROR_SENDING, JobRunRepo, PartOrderError, RepositoryError
 from ipobot.domain.models import IpoListing
 from ipobot.services.ipo_digest import DartUnavailable
-from ipobot.services.weekly import WeeklySchedule, WeeklyService, job_key, week_key, weekly_due
+from ipobot.services.delivery import NONCE_RESEND_WINDOW
+from ipobot.services.weekly import LAST_ERROR_SENDING, WeeklySchedule, WeeklyService, job_key, week_key, weekly_due
 from tests.conftest import FakeClock
 from tests.fakes.discord_channel import FakeDiscord, forbidden
 
@@ -127,6 +128,20 @@ def test_weekly_due_sending_retries_without_backoff_inside_grace():
     sending = {"status": "failed", "ran_at": utc_iso(at(FRI, 18)), "last_error": "sending"}
     assert weekly_due(at(FRI, 18, 1), sending, SCHEDULE)
     assert not weekly_due(at(FRI + timedelta(days=1), 0, 0), sending, SCHEDULE)  # grace 밖은 재시도하지 않는다
+
+
+def test_weekly_due_sending_bypass_bounded_by_nonce_window():
+    # 첫 전송 시도부터 NONCE_RESEND_WINDOW(4분) 안에서만 백오프를 건너뛰고, 그 뒤는 일반 백오프를 따른다.
+    sending = {"status": "failed", "ran_at": utc_iso(at(FRI, 18)), "last_error": LAST_ERROR_SENDING}
+    assert weekly_due(at(FRI, 18, 3), sending, SCHEDULE)
+    assert at(FRI, 18) + NONCE_RESEND_WINDOW == at(FRI, 18, 4)
+    assert not weekly_due(at(FRI, 18, 4), sending, SCHEDULE)
+    assert not weekly_due(at(FRI, 18, 14), sending, SCHEDULE)
+    assert weekly_due(at(FRI, 18, 15), sending, SCHEDULE)
+
+
+def test_sending_literal_is_shared_with_repository():
+    assert LAST_ERROR_SENDING == JOB_LAST_ERROR_SENDING == "sending"
 
 
 # ---------------------------------------------------------------- 실행
@@ -278,6 +293,31 @@ async def test_crash_before_first_part_recorded_retries_next_tick_without_duplic
     assert e.digest.calls == [FRI]
     e.conn.close()
     restarted.conn.close()
+
+
+async def test_persistent_progress_record_failure_is_throttled_by_backoff(tmp_path, monkeypatch):
+    # 진행 기록이 grace 내내 실패해도 매 틱 재전송하지 않는다: nonce 창(첫 시도 기준 4분) 안 재시도 뒤 백오프.
+    # 디스코드 중복 제거 창 밖 재전송만 새 공개 게시가 되므로 공개 게시는 백오프당 최대 1건이다.
+    e = Env(tmp_path)
+
+    def fail(key, i, message_id):
+        raise RuntimeError("record failed")
+
+    monkeypatch.setattr(e.svc.jobs, "mark_part_sent", fail)
+    minutes = int(SCHEDULE.grace / timedelta(minutes=1))
+    failures = 0
+    for m in range(minutes):  # 60초 틱
+        try:
+            await e.run(at(FRI, 18) + timedelta(minutes=m))
+        except RuntimeError:
+            failures += 1
+    assert failures == len(e.fake.calls)  # 전송마다 진행 기록 실패
+    bound = SCHEDULE.grace // SCHEDULE.retry_backoff + 2
+    assert len(e.fake.posted) <= bound, (len(e.fake.posted), len(e.fake.calls))
+    # 백오프 주기마다 첫 시도 + 창 안(4분) 재시도 3회 = 최대 4회 전송
+    assert len(e.fake.calls) <= 4 * bound
+    assert e.row()["last_error"] == "sending"
+    e.conn.close()
 
 
 async def test_failed_outside_grace_is_skipped_with_error_log(env, caplog):

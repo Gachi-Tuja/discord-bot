@@ -646,6 +646,10 @@ class SummaryRepo:
             )
 
 
+# job_runs 선기록 직후의 last_error. 이 값이 남아 있으면 전송 도중 프로세스가 죽었거나 진행 기록이 실패한 것이다.
+JOB_LAST_ERROR_SENDING = "sending"
+
+
 class JobRunRepo:
     """`job_runs`(R21). done = 전 파트 전송 성공, failed = 수집·전송 실패 또는 전송 중(선기록)."""
 
@@ -659,14 +663,19 @@ class JobRunRepo:
         """수집 실패 upsert: failed, last_error, attempts += 1, ran_at = now. done 행은 바꾸지 않는다."""
         self._upsert_failed(job_key, error, None, now)
 
-    def begin_sending(self, job_key: str, payload_json: str, now: datetime) -> None:
+    def begin_sending(
+        self, job_key: str, payload_json: str, now: datetime, *, keep_ran_at: bool = False
+    ) -> None:
         """전송 전 선기록(R15 3단계): failed/'sending', payload_json, attempts += 1, ran_at = now.
 
         이미 저장된 payload_json은 바꾸지 않는다(재시도 간 내용·분할 고정).
+        `keep_ran_at`이면 기존 행의 ran_at(첫 전송 시도 시각)을 유지한다 — nonce 창 안의 'sending' 재개용.
         """
-        self._upsert_failed(job_key, "sending", payload_json, now)
+        self._upsert_failed(job_key, JOB_LAST_ERROR_SENDING, payload_json, now, keep_ran_at=keep_ran_at)
 
-    def _upsert_failed(self, job_key: str, error: str, payload_json: str | None, now: datetime) -> None:
+    def _upsert_failed(
+        self, job_key: str, error: str, payload_json: str | None, now: datetime, *, keep_ran_at: bool = False
+    ) -> None:
         with transaction(self._conn) as c:
             cur = c.execute(
                 """
@@ -675,12 +684,12 @@ class JobRunRepo:
                 ON CONFLICT (job_key) DO UPDATE
                    SET status = 'failed',
                        attempts = job_runs.attempts + 1,
-                       ran_at = excluded.ran_at,
+                       ran_at = CASE WHEN ? THEN job_runs.ran_at ELSE excluded.ran_at END,
                        last_error = excluded.last_error,
                        payload_json = COALESCE(job_runs.payload_json, excluded.payload_json)
                  WHERE job_runs.status = 'failed'
                 """,
-                (job_key, utc_iso(now), error, payload_json),
+                (job_key, utc_iso(now), error, payload_json, keep_ran_at),
             )
             if cur.rowcount == 0:
                 raise RepositoryError(f"job {job_key}: 이미 done입니다")

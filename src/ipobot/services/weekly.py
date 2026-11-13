@@ -2,8 +2,10 @@
 
 - 슬롯: 설정 요일·시각(KST)의 가장 최근 예정 시각. 키는 그 날짜의 ISO 주(`weekly:2026-W05`), nonce는 `w2026-W05:{i}`.
 - `weekly_due`: 예정 시각 ≤ now < 예정 시각 + grace 이고, 행이 없거나 `failed`이면서 `ran_at + 백오프` 경과.
-  단 `last_error='sending'`(전송 중 크래시·진행 기록 실패)은 백오프 없이 다음 틱에 재시도한다 — 같은 nonce가
-  디스코드 중복 제거 창(약 5분) 안에서 재전송돼야 이미 게시된 파트가 중복되지 않는다.
+  단 `last_error='sending'`(전송 중 크래시·진행 기록 실패)은 첫 전송 시도(ran_at)부터 `NONCE_RESEND_WINDOW`
+  안에서는 백오프 없이 다음 틱에 재시도한다 — 같은 nonce가 디스코드 중복 제거 창(약 5분) 안에서 재전송돼야 이미
+  게시된 파트가 중복되지 않는다. 창 안 재개는 ran_at을 유지하므로, 진행 기록이 계속 실패해도 창이 지나면 일반
+  백오프로 떨어진다(중복 공개 게시는 백오프당 최대 1건).
 - `run_weekly`: payload_json이 있으면 재사용(DART 재호출 없음) → 없으면 수집·렌더링(실패 시 failed/dart_unavailable,
   메시지 0건) → 선기록(failed/sending) → 파트별 전송·진행 기록 → 전 파트 성공 시 done.
 - grace를 벗어난 failed는 건너뛰고 ERROR 로그를 한 번 남긴다(일부 파트만 게시됐을 수 있음).
@@ -22,16 +24,15 @@ import discord
 
 from ipobot.bot.formatting import digest_parts, parts_from_json, parts_to_json
 from ipobot.clock import KST, Clock
-from ipobot.db.repositories import JobRunRepo
+from ipobot.db.repositories import JOB_LAST_ERROR_SENDING, JobRunRepo
 from ipobot.domain.models import IpoListing
-from ipobot.services.delivery import Delivered, deliver_parts
+from ipobot.services.delivery import NONCE_RESEND_WINDOW, Delivered, deliver_parts
 from ipobot.services.ipo_digest import DartUnavailable, digest_items
 
 log = logging.getLogger(__name__)
 
 LAST_ERROR_DART = "dart_unavailable"
-# 선기록 직후 상태. 이 값이 남아 있으면 전송 도중 프로세스가 죽었거나 진행 기록이 실패한 것이다.
-LAST_ERROR_SENDING = "sending"
+LAST_ERROR_SENDING = JOB_LAST_ERROR_SENDING
 
 
 @dataclass(frozen=True)
@@ -91,9 +92,19 @@ def weekly_due(now: datetime, last_run: Mapping[str, Any] | None, schedule: Week
         return True
     if last_run["status"] != "failed":
         return False
-    if last_run["last_error"] == LAST_ERROR_SENDING:
+    if resumes_in_nonce_window(now, last_run):
         return True
     return now >= _ran_at(last_run) + schedule.retry_backoff
+
+
+def resumes_in_nonce_window(now: datetime, last_run: Mapping[str, Any] | None) -> bool:
+    """'sending' 행을 첫 전송 시도 시각부터 nonce 재전송 창 안에서 다시 보내는 경우인가."""
+    return (
+        last_run is not None
+        and last_run["status"] == "failed"
+        and last_run["last_error"] == LAST_ERROR_SENDING
+        and now < _ran_at(last_run) + NONCE_RESEND_WINDOW
+    )
 
 
 class DigestBuilder(Protocol):
@@ -141,7 +152,8 @@ class WeeklyService:
             summaries = await self.summaries.summaries_for(listings) if self.summaries is not None else None
             parts = digest_parts(digest_items(listings, summaries), post_date)
             start = 0
-        self.jobs.begin_sending(key, parts_to_json(parts), now)
+        # 창 안 재개는 첫 시도 시각을 유지해야 진행 기록이 계속 실패할 때 창이 끝나고 백오프로 떨어진다.
+        self.jobs.begin_sending(key, parts_to_json(parts), now, keep_ran_at=resumes_in_nonce_window(now, row))
         outcome = await deliver_parts(
             self.channel,
             parts,
