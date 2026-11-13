@@ -181,13 +181,21 @@ class ConfirmView(discord.ui.View):
             # defer 실패·취소(CancelledError)·재시도 가능한 거부 모두 초안이 남아 있으므로 다시 누를 수 있게 한다.
             if not resolved:
                 self._busy = False
+        # 여기부터는 이미 저장(또는 종결 거부)된 상태다. 표시 실패가 on_error로 번져 「실패」로 안내되면 안 되므로
+        # Discord 오류는 로그만 남기고, 버튼 수정이 실패해도 확정 안내는 보낸다.
         self.stop()
         self._disable()
-        await interaction.edit_original_response(view=self)
-        if isinstance(result, Confirmed):
-            await interaction.followup.send(confirmed_text(result))
-        else:
-            await interaction.followup.send(clip_content(result.message), ephemeral=True)
+        try:
+            await interaction.edit_original_response(view=self)
+        except discord.HTTPException:
+            log.warning("확정 후 버튼 비활성화 실패 draft=%s", self.draft_id, exc_info=True)
+        try:
+            if isinstance(result, Confirmed):
+                await interaction.followup.send(confirmed_text(result))
+            else:
+                await interaction.followup.send(clip_content(result.message), ephemeral=True)
+        except discord.HTTPException:
+            log.warning("확정 안내 전송 실패 draft=%s", self.draft_id, exc_info=True)
 
     async def on_cancel(self, interaction: discord.Interaction) -> None:
         # 확정이 진행 중이면 취소를 거부한다(저장 여부를 거짓으로 알리지 않는다). 그렇지 않으면 수정 전에

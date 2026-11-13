@@ -283,3 +283,28 @@ async def test_view_on_error_reports_generic_failure():
     inter = interaction(done=True)
     await view.on_error(inter, RuntimeError("boom"), view.confirm_button)
     inter.followup.send.assert_awaited_once_with(INTERACTION_FAILED_TEXT, ephemeral=True)
+
+
+async def test_saved_confirm_survives_edit_failure_and_still_confirms():
+    from ipobot.bot.errors import INTERACTION_FAILED_TEXT
+
+    view, store, draft_id, confirm = make_view()
+    inter = interaction()
+    inter.edit_original_response.side_effect = discord.HTTPException(MagicMock(status=500), "edit failed")
+    await view.on_confirm(inter)  # on_error로 번지지 않는다
+    confirm.assert_awaited_once()
+    assert store.get(draft_id) is None
+    (text,), kwargs = inter.followup.send.await_args
+    assert inter.followup.send.await_count == 1
+    assert text != INTERACTION_FAILED_TEXT and CONFIRM_RESULT_SCHEDULE in text and "ephemeral" not in kwargs
+
+
+async def test_saved_confirm_followup_failure_is_only_logged(caplog):
+    view, store, draft_id, _ = make_view()
+    inter = interaction()
+    inter.edit_original_response.side_effect = discord.HTTPException(MagicMock(status=500), "edit failed")
+    inter.followup.send.side_effect = discord.HTTPException(MagicMock(status=500), "send failed")
+    await view.on_confirm(inter)
+    assert store.get(draft_id) is None
+    assert inter.followup.send.await_count == 1
+    assert "확정 안내 전송 실패" in caplog.text
