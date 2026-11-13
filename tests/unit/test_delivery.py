@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
-from types import SimpleNamespace
-from unittest.mock import create_autospec
+from dataclasses import dataclass
+from datetime import timedelta
 
 import aiohttp
 import discord
 import pytest
 
-from ipobot.clock import KST
-from ipobot.services.alerts import OperatorAlerts
 from ipobot.services.delivery import Delivered, Failed, deliver_parts, part_nonce
+from tests.fakes.discord_channel import FakeDiscord, Resp, forbidden, not_found, server_error
 
 
 @dataclass(frozen=True)
@@ -25,21 +22,6 @@ class P:
     @property
     def kwargs(self):
         return {"content": self.content}
-
-
-class Resp:
-    def __init__(self, status: int, reason: str) -> None:
-        self.status = status
-        self.reason = reason
-
-
-def not_found(code: int | None) -> discord.NotFound:
-    msg = {"code": code, "message": "Unknown"} if code is not None else "<html>404</html>"
-    return discord.NotFound(Resp(404, "Not Found"), msg)
-
-
-def server_error() -> discord.DiscordServerError:
-    return discord.DiscordServerError(Resp(503, "Service Unavailable"), "busy")
 
 
 class FakeTime:
@@ -53,35 +35,6 @@ class FakeTime:
     async def sleep(self, s: float) -> None:
         self.sleeps.append(s)
         self.t += s
-
-
-@dataclass
-class FakeDiscord:
-    """nonce 창 안 중복을 흉내 낸다: 같은 nonce면 기존 메시지를 돌려준다."""
-
-    script: list = field(default_factory=list)  # 호출 순서대로: None(성공) | 예외 | callable
-    calls: list[tuple[str, dict]] = field(default_factory=list)
-    by_nonce: dict[str, SimpleNamespace] = field(default_factory=dict)
-    posted: list[SimpleNamespace] = field(default_factory=list)
-
-    def channel(self):
-        ch = create_autospec(discord.TextChannel, instance=True)
-        ch.send.side_effect = self.send
-        return ch
-
-    async def send(self, *, nonce: str, **kwargs):
-        self.calls.append((nonce, kwargs))
-        step = self.script.pop(0) if self.script else None
-        if callable(step) and not isinstance(step, BaseException):
-            step = await step()
-        if isinstance(step, BaseException):
-            raise step
-        if nonce in self.by_nonce:
-            return self.by_nonce[nonce]
-        msg = SimpleNamespace(id=1000 + len(self.posted), nonce=nonce, **kwargs)
-        self.by_nonce[nonce] = msg
-        self.posted.append(msg)
-        return msg
 
 
 class Recorder:
@@ -163,8 +116,7 @@ async def test_ambiguous_success_already_posted_is_deduped_by_nonce():
 
     async def posted_then_5xx():
         # 첫 시도는 실제로 게시되었지만 응답이 5xx로 돌아온 경우
-        fake.by_nonce["j7:0"] = SimpleNamespace(id=555, nonce="j7:0")
-        fake.posted.append(fake.by_nonce["j7:0"])
+        fake.preposted("j7:0", 555)
         return server_error()
 
     fake.script = [posted_then_5xx]
@@ -259,7 +211,7 @@ async def test_unknown_channel_10003():
 
 
 async def test_forbidden_alerts_without_retry():
-    fake = FakeDiscord(script=[None, discord.Forbidden(Resp(403, "Forbidden"), {"code": 50013, "message": "x"})])
+    fake = FakeDiscord(script=[None, forbidden()])
     result, rec, _ = await deliver(fake, PARTS)
     assert result == Failed("send_forbidden", alert=True, index=1)
     assert rec.sent == [(0, "1000")]
@@ -276,15 +228,24 @@ async def test_other_4xx_fails_without_retry_or_alert():
     assert len(fake.calls) == 1
 
 
-def test_operator_alert_once_per_day_per_kind(caplog, fake_clock):
-    clock = fake_clock
-    alerts = OperatorAlerts(clock)
-    with caplog.at_level(logging.ERROR):
-        assert alerts.alert("krx_auth", "401") is True
-        assert alerts.alert("krx_auth", "401") is False
-        assert alerts.alert("discord_forbidden", "x") is True
-        clock.set(datetime(2026, 11, 13, 9, 0, tzinfo=KST))
-        assert alerts.alert("krx_auth", "401") is True
-    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert errors == ["OPERATOR_ALERT krx_auth 401", "OPERATOR_ALERT discord_forbidden x",
-                      "OPERATOR_ALERT krx_auth 401"]
+async def test_same_nonce_after_window_posts_duplicate(fake_clock):
+    """Gate3 F5: 디스코드 nonce 중복 제거는 몇 분짜리 창이다. 창이 지나면 같은 nonce도 새로 게시된다."""
+    fake = FakeDiscord(clock=fake_clock)
+    first, _, _ = await deliver(fake, [P("a")])
+    fake_clock.set(fake_clock.now() + timedelta(minutes=4, seconds=59))
+    await deliver(fake, [P("a")])
+    assert first == Delivered(sent=1)
+    assert len(fake.posted) == 1
+    fake_clock.set(fake_clock.now() + timedelta(minutes=5))
+    await deliver(fake, [P("a")])
+    assert fake.nonces == ["j7:0", "j7:0", "j7:0"]
+    assert len(fake.posted) == 2
+
+
+async def test_autospec_rejects_enforce_nonce():
+    """fake 채널은 실제 TextChannel.send 시그니처를 따른다(enforce_nonce는 페이로드 계층이 붙인다)."""
+    ch = FakeDiscord().channel()
+    with pytest.raises(TypeError):
+        await ch.send(content="x", nonce="j1:0", enforce_nonce=True)
+    msg = await ch.send(content="x", nonce="j1:0")
+    assert msg.nonce == "j1:0"
