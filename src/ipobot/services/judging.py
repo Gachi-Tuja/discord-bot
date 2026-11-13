@@ -10,8 +10,10 @@
 
 `run_announcements`
 - 결과 공지(R22): 종결·미공지·`next_attempt_at ≤ now` 행. nonce `j{id}:{i}`, 파트마다 진행 카운터를 기록한다.
-  실패하면 `announce_error`와 `next_attempt_at = now + 간격`(Gate3 F2). `on_sent` 기록 예외는 백오프 없이
-  다음 주기에 같은 start로 재시도한다(Gate3 F7).
+  실패하면 `announce_error`와 `next_attempt_at = now + 간격`(Gate3 F2). `on_sent` 기록 예외는 첫 전송 시도부터
+  `NONCE_RESEND_WINDOW` 안에서만 백오프 없이 다음 주기에 같은 start로 재시도한다(Gate3 F7). 창이 지나면 첫 시도
+  시각 + 간격까지 쉬므로, 진행 기록이 계속 실패해도 중복 공개 게시는 간격당 최대 1건이다(첫 시도 시각은 메모리에
+  두며 재시작하면 초기화된다).
 - 인증 오류 지연 안내(Part A1): 판정 시도 결과가 Wait이고 그 시도에서 auth를 관측했으며 아직 안내하지 않았을 때만
   보낸다(Gate3 F4). nonce `a{id}:{i}`. 실패 정책은 결과 공지와 같고, 실패해도 판정 전이를 막지 않는다.
 """
@@ -51,7 +53,7 @@ from ipobot.domain.models import (
 )
 from ipobot.domain.scoring import GroupEntry, InvalidActual, rank_group
 from ipobot.services import alerts
-from ipobot.services.delivery import Delivered, deliver_parts
+from ipobot.services.delivery import NONCE_RESEND_WINDOW, Delivered, deliver_parts
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +103,9 @@ class JudgingService:
     # 지연 안내 대기열: judgment_id → 다음 전송 가능 시각. run_judging이 F4 조건으로 채우고,
     # 시작 시와 매 공지 주기에 DB에서 되살린다(재시작으로 대기열을 잃어도 안내가 1회 나간다).
     _auth_notice_due: dict[int, datetime] = field(default_factory=dict, init=False, repr=False)
+    # 전송 중 예외(진행 기록 실패 등)가 난 공지의 첫 전송 시도 시각: judgment_id → 시각. nonce 재전송 창 판정용.
+    _announce_first_try: dict[int, datetime] = field(default_factory=dict, init=False, repr=False)
+    _auth_first_try: dict[int, datetime] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.judgments = JudgmentRepo(self.conn)
@@ -241,18 +246,45 @@ class JudgingService:
         now = self.clock.now()
         self._restore_auth_notices(now)  # 기존 항목의 백오프 시각은 그대로 둔다
         for row in self.judgments.due_announcements(now):
+            jid = row["id"]
+            if self._resend_held_until(self._announce_first_try, jid, now) is not None:
+                continue
+            self._begin_try(self._announce_first_try, jid, now)
             try:
                 await self._announce(row, now)
             except Exception:
-                # on_sent 기록 실패 포함(Gate3 F7): 백오프 없이 다음 주기에 같은 start로 재시도한다.
-                log.exception("결과 공지 실패 judgment=%s", row["id"])
+                # on_sent 기록 실패 포함(Gate3 F7): 창 안이면 다음 주기에 같은 start로, 창 밖이면 간격 뒤 재시도한다.
+                log.exception("결과 공지 실패 judgment=%s", jid)
+            else:
+                self._announce_first_try.pop(jid, None)
         for jid, due in list(self._auth_notice_due.items()):
             if due > now:
                 continue
+            held = self._resend_held_until(self._auth_first_try, jid, now)
+            if held is not None:
+                self._auth_notice_due[jid] = held
+                continue
+            self._begin_try(self._auth_first_try, jid, now)
             try:
                 await self._notify_auth_delay(jid, now)
             except Exception:
                 log.exception("지연 안내 실패 judgment=%s", jid)
+            else:
+                self._auth_first_try.pop(jid, None)
+
+    def _begin_try(self, first_try: dict[int, datetime], jid: int, now: datetime) -> None:
+        """창 안 재개는 첫 시도 시각을 유지한다. 그래야 진행 기록이 계속 실패할 때 창이 끝나고 백오프로 떨어진다."""
+        first = first_try.get(jid)
+        if first is None or not first <= now < first + NONCE_RESEND_WINDOW:
+            first_try[jid] = now
+
+    def _resend_held_until(self, first_try: dict[int, datetime], jid: int, now: datetime) -> datetime | None:
+        """직전 시도가 예외로 끝났고 nonce 재전송 창이 지났으면, 첫 시도 시각 + 간격까지 쉰다."""
+        first = first_try.get(jid)
+        if first is None or now < first + NONCE_RESEND_WINDOW:  # 시계가 뒤로 가면 _begin_try가 창을 새로 연다
+            return None
+        resume = first + self._interval
+        return resume if now < resume else None
 
     async def _announce(self, row: sqlite3.Row, now: datetime) -> None:
         jid = row["id"]

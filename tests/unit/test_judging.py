@@ -495,6 +495,69 @@ async def test_on_sent_failure_retries_next_tick_without_backoff(env, monkeypatc
     assert env.row(jid)["announced_at"] is not None
 
 
+
+def _fail_always(*args, **kwargs):
+    raise RuntimeError("disk full")
+
+
+def _max_posts_per_hour(env) -> int:
+    return 60 // env.svc.cfg.krx_poll_interval_minutes + 2
+
+
+async def test_announce_persistent_on_sent_failure_bounded_reposts(env, monkeypatch):
+    """진행 기록이 계속 실패해도 nonce 재전송 창이 지나면 간격 백오프로 떨어진다(매 틱 공개 재게시 금지)."""
+    jid = env.add_group()
+    env.krx.set("KOSDAQ", D1, [q(D1)])
+    monkeypatch.setattr(env.svc.judgments, "mark_part_sent", _fail_always)
+    for m in range(61):  # 60초 스케줄러 tick, 1시간
+        await env.tick(at(D2) + timedelta(minutes=m))
+    assert len(env.fake.posted) <= _max_posts_per_hour(env)
+    # 창(4분) 안 재시도 5회 + 백오프 뒤 재개 묶음 — 매 틱 61회 전송이 아니다
+    assert len(env.fake.calls) <= 5 * _max_posts_per_hour(env)
+    assert env.fake.nonces == [f"j{jid}:0"] * len(env.fake.calls)
+    assert env.row(jid)["announced_at"] is None
+
+
+async def test_auth_notice_persistent_on_sent_failure_bounded_reposts(env, monkeypatch):
+    jid = env.add_group()
+    env.svc._auth_notice_due[jid] = at(D2)
+    monkeypatch.setattr(env.svc.judgments, "mark_auth_delay_part_sent", _fail_always)
+    for m in range(61):
+        env.clock.set(at(D2) + timedelta(minutes=m))
+        await env.svc.run_announcements()
+    assert len(env.fake.posted) <= _max_posts_per_hour(env)
+    assert len(env.fake.calls) <= 5 * _max_posts_per_hour(env)
+    assert env.fake.nonces == [f"a{jid}:0"] * len(env.fake.calls)
+    assert env.row(jid)["auth_delay_notified_at"] is None
+
+
+async def test_auth_notice_single_on_sent_crash_retries_next_tick(env, monkeypatch):
+    jid = env.add_group()
+    env.svc._auth_notice_due[jid] = at(D2)
+    real = env.judgments.mark_auth_delay_part_sent
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("db busy")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(env.svc.judgments, "mark_auth_delay_part_sent", flaky)
+    for m in range(3):
+        env.clock.set(at(D2, 9, m))
+        await env.svc.run_announcements()
+    assert env.fake.nonces == [f"a{jid}:0", f"a{jid}:0"]
+    assert len(env.fake.posted) == 1
+    assert env.row(jid)["auth_delay_notified_at"] is not None
+
+
+def test_nonce_resend_hold_resets_when_clock_steps_back(env):
+    first = {1: at(D2, 9, 10)}
+    assert env.svc._resend_held_until(first, 1, at(D2, 9, 0)) is None
+    env.svc._begin_try(first, 1, at(D2, 9, 0))
+    assert first[1] == at(D2, 9, 0)
+
 # ---------------------------------------------------------------- 인증 오류 지연 안내 (Part A1·Gate3 F4)
 
 
