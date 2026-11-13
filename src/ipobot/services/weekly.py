@@ -2,6 +2,8 @@
 
 - 슬롯: 설정 요일·시각(KST)의 가장 최근 예정 시각. 키는 그 날짜의 ISO 주(`weekly:2026-W05`), nonce는 `w2026-W05:{i}`.
 - `weekly_due`: 예정 시각 ≤ now < 예정 시각 + grace 이고, 행이 없거나 `failed`이면서 `ran_at + 백오프` 경과.
+  단 `last_error='sending'`(전송 중 크래시·진행 기록 실패)은 백오프 없이 다음 틱에 재시도한다 — 같은 nonce가
+  디스코드 중복 제거 창(약 5분) 안에서 재전송돼야 이미 게시된 파트가 중복되지 않는다.
 - `run_weekly`: payload_json이 있으면 재사용(DART 재호출 없음) → 없으면 수집·렌더링(실패 시 failed/dart_unavailable,
   메시지 0건) → 선기록(failed/sending) → 파트별 전송·진행 기록 → 전 파트 성공 시 done.
 - grace를 벗어난 failed는 건너뛰고 ERROR 로그를 한 번 남긴다(일부 파트만 게시됐을 수 있음).
@@ -28,6 +30,8 @@ from ipobot.services.ipo_digest import DartUnavailable, digest_items
 log = logging.getLogger(__name__)
 
 LAST_ERROR_DART = "dart_unavailable"
+# 선기록 직후 상태. 이 값이 남아 있으면 전송 도중 프로세스가 죽었거나 진행 기록이 실패한 것이다.
+LAST_ERROR_SENDING = "sending"
 
 
 @dataclass(frozen=True)
@@ -85,7 +89,11 @@ def weekly_due(now: datetime, last_run: Mapping[str, Any] | None, schedule: Week
         return False
     if last_run is None:
         return True
-    return last_run["status"] == "failed" and now >= _ran_at(last_run) + schedule.retry_backoff
+    if last_run["status"] != "failed":
+        return False
+    if last_run["last_error"] == LAST_ERROR_SENDING:
+        return True
+    return now >= _ran_at(last_run) + schedule.retry_backoff
 
 
 class DigestBuilder(Protocol):

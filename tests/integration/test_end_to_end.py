@@ -407,9 +407,7 @@ async def test_two_part_weekly_crash_after_first_part_recorded(h, monkeypatch):
     assert (row["status"], row["parts_sent"], row["last_error"]) == ("failed", 1, "sending")
 
     h.crash_restart()
-    await h.tick(at(WEEKLY_FRI, 18, 5))  # 재시도 백오프(15분) 전
-    assert len(h.ipo.calls) == 1
-    await h.tick(at(WEEKLY_FRI, 18, 15))
+    await h.tick(at(WEEKLY_FRI, 18, 1))  # 'sending'은 백오프 없이 다음 틱에 남은 파트부터 보낸다
     assert posted(h.ipo) == [f"{nonce_base}:0", f"{nonce_base}:1"]
     row = h.weekly_row(WEEKLY_FRI)
     assert (row["job_key"], row["status"], row["parts_sent"]) == (key, "done", 2)

@@ -116,10 +116,17 @@ def test_latest_slot_grace_across_week_boundary():
 
 
 def test_weekly_due_failed_backoff_and_done():
-    failed = {"status": "failed", "ran_at": utc_iso(at(FRI, 18))}
+    failed = {"status": "failed", "ran_at": utc_iso(at(FRI, 18)), "last_error": "send_forbidden"}
     assert not weekly_due(at(FRI, 18, 14), failed, SCHEDULE)
     assert weekly_due(at(FRI, 18, 15), failed, SCHEDULE)
-    assert not weekly_due(at(FRI, 18, 15), {"status": "done", "ran_at": utc_iso(at(FRI, 18))}, SCHEDULE)
+    done = {"status": "done", "ran_at": utc_iso(at(FRI, 18)), "last_error": None}
+    assert not weekly_due(at(FRI, 18, 15), done, SCHEDULE)
+
+
+def test_weekly_due_sending_retries_without_backoff_inside_grace():
+    sending = {"status": "failed", "ran_at": utc_iso(at(FRI, 18)), "last_error": "sending"}
+    assert weekly_due(at(FRI, 18, 1), sending, SCHEDULE)
+    assert not weekly_due(at(FRI + timedelta(days=1), 0, 0), sending, SCHEDULE)  # grace 밖은 재시도하지 않는다
 
 
 # ---------------------------------------------------------------- 실행
@@ -238,13 +245,39 @@ async def test_crash_after_first_part_recorded_resumes_from_second(tmp_path, mon
     row = e.row()
     assert (row["status"], row["last_error"], row["parts_sent"]) == ("failed", "sending", 1)
     monkeypatch.setattr(e.svc.jobs, "mark_part_sent", real)
-    await e.run(at(FRI, 18, 10))  # 백오프 전
-    assert len(e.fake.calls) == 1
-    await e.run(at(FRI, 18, 15))
+    await e.run(at(FRI, 18, 1))  # 'sending'은 백오프 없이 다음 틱에 이어 보낸다
     assert e.row()["status"] == "done"
     assert e.fake.nonces == ["w2026-W05:0", "w2026-W05:1"]
     assert e.digest.calls == [FRI]
     e.conn.close()
+
+
+async def test_crash_before_first_part_recorded_retries_next_tick_without_duplicate(tmp_path, monkeypatch):
+    # 파트 0 게시 후 진행 기록 전에 죽으면 parts_sent=0, 'sending'으로 남는다. 다음 틱(+1분)이 같은 nonce로
+    # 재전송해야 디스코드 nonce 중복 제거 창(5분) 안에 들어가 메시지가 하나로 유지된다.
+    e = Env(tmp_path)
+    real = e.svc.jobs.mark_part_sent
+
+    def crash(key, i, message_id):
+        raise RuntimeError("crash")
+
+    monkeypatch.setattr(e.svc.jobs, "mark_part_sent", crash)
+    with pytest.raises(RuntimeError):
+        await e.run()
+    assert (e.row()["last_error"], e.row()["parts_sent"]) == ("sending", 0)
+    monkeypatch.setattr(e.svc.jobs, "mark_part_sent", real)
+    e.clock.set(at(FRI, 18, 1))  # fake 디스코드의 nonce 창 시계도 +1분
+    restarted = Env(tmp_path, digest=e.digest, now=at(FRI, 18, 1))
+    restarted.fake = e.fake
+    restarted.svc.channel = e.fake.channel()
+    await restarted.run()
+    row = restarted.row()
+    assert (row["status"], row["parts_sent"]) == ("done", 1)
+    assert e.fake.nonces == ["w2026-W05:0", "w2026-W05:0"]
+    assert len(e.fake.posted) == 1
+    assert e.digest.calls == [FRI]
+    e.conn.close()
+    restarted.conn.close()
 
 
 async def test_failed_outside_grace_is_skipped_with_error_log(env, caplog):
