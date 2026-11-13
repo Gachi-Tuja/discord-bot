@@ -131,7 +131,8 @@ CREATE TABLE judgments (
   CHECK (announce_parts_sent = 0 OR status IN ('done','unjudgeable')),
   CHECK ((announce_parts_sent = 0) = (announce_message_id IS NULL)),
   CHECK (announced_at IS NULL OR status IN ('done','unjudgeable')),
-  CHECK (announced_at IS NULL OR announce_parts_sent >= 1)
+  CHECK (announced_at IS NULL OR announce_parts_sent >= 1),
+  CHECK (auth_delay_notified_at IS NULL OR auth_delay_parts_sent >= 1)
 );
 
 CREATE TABLE judgment_results (

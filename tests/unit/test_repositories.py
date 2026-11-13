@@ -186,6 +186,7 @@ VIOLATIONS = [
     # judgments: Part A
     ("auth-delay-neg", "judgments", dict(JUDGMENT_PENDING, auth_delay_parts_sent=-1)),
     ("auth-delay-null", "judgments", dict(JUDGMENT_PENDING, auth_delay_parts_sent=None)),
+    ("auth-delay-notified-zero-parts", "judgments", dict(JUDGMENT_PENDING, auth_delay_notified_at="x")),
     # predictions / targets
     ("base-price-zero", "predictions", dict(PREDICTION, base_price=0)),
     ("base-mcap-neg", "predictions", dict(PREDICTION, base_market_cap=-1)),
