@@ -4,6 +4,8 @@
 - 모든 `send`는 `wait_for(call_timeout)`로 상한을 둔다.
 - 모호한 실패는 파트당 `budget` 안에서만 같은 nonce로 재시도하고, 넘으면 `send_ambiguous`.
 - `NotFound`는 code 10008(nonce 원본 삭제)만 전달로 간주한다.
+- `on_sent`(진행 기록 콜백) 예외는 잡지 않고 그대로 전파된다. 그 파트는 이미 게시되었을 수 있으므로,
+  호출자는 백오프 없이 다음 tick에 같은 `start`로 재시도한다. nonce 창(수 분) 안이라 중복 게시되지 않는다.
 """
 
 from __future__ import annotations

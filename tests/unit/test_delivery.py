@@ -253,3 +253,23 @@ async def test_autospec_rejects_enforce_nonce():
         await ch.send(content="x", nonce="j1:0", enforce_nonce=True)
     msg = await ch.send(content="x", nonce="j1:0")
     assert msg.nonce == "j1:0"
+
+
+async def test_on_sent_exception_propagates_and_rerun_same_start_does_not_duplicate():
+    """Gate3 F7: on_sent 예외는 전파된다. 다음 tick에 같은 start로 재시도하면 nonce 창 안에서 중복이 없다."""
+    fake = FakeDiscord()
+
+    def on_sent(i, mid):
+        if i == 1:
+            raise RuntimeError("db locked")
+
+    with pytest.raises(RuntimeError):
+        await deliver_parts(fake.channel(), PARTS, "j7", on_sent=on_sent)
+    assert fake.nonces == ["j7:0", "j7:1"]
+
+    rec = Recorder()
+    result = await deliver_parts(fake.channel(), PARTS, "j7", start=1, on_sent=rec.on_sent)
+    assert result == Delivered(sent=2)
+    assert rec.sent == [(1, "1001"), (2, "1002")]
+    assert len(fake.posted) == 3
+    assert [m.nonce for m in fake.posted] == ["j7:0", "j7:1", "j7:2"]
