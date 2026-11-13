@@ -4,6 +4,7 @@
   키·형식 확인용(CP-KRX)이며 DB에 쓰지 않는다(메모리 DB 사용).
 - `sync-master`: DART corpCode.xml로 `stock_master`를 갱신한다(DB_PATH).
 - `preview-digest [--date YYYY-MM-DD]`: 상장 예정 다이제스트를 게시하지 않고 출력한다(기본 오늘, KST).
+- `run`: 디스코드 봇을 실행한다(전체 환경변수 필요).
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("sync-master", help="DART corpCode.xml로 종목 마스터 갱신")
     preview = sub.add_parser("preview-digest", help="상장 예정 다이제스트 미리보기(게시 안 함)")
     preview.add_argument("--date", dest="post_date", type=_parse_date, default=None, metavar="YYYY-MM-DD")
+    sub.add_parser("run", help="디스코드 봇 실행")
     return parser
 
 
@@ -182,6 +184,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return asyncio.run(_run_krx_probe(args))
         if args.command in ("sync-master", "preview-digest"):
             return asyncio.run(_run_dart_command(args))
+        if args.command == "run":
+            from ipobot.bot.app import run
+
+            return run()
     except ConfigError as exc:
         print(f"설정 오류: {exc}", file=sys.stderr)
         return 2
