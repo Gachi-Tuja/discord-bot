@@ -28,6 +28,17 @@ DIGEST_TITLE = "향후 2주간 상장 예정 종목"
 NO_SUMMARY = "요약 없음"
 CONFIRM_RESULT_SCHEDULE = "결과는 판정 거래일 다음 영업일 오전, KRX 공개 후 공지됩니다"
 
+# 예측 등록 거부 문구(S11, R1·R5·R6·R7·R12). 사유마다 문구가 고유하다.
+REJECT_STOCK_NOT_FOUND = "종목을 찾을 수 없습니다"
+REJECT_STOCK_AMBIGUOUS = "같은 이름의 종목이 여러 개입니다. 종목코드로 다시 입력해 주세요"
+REJECT_KRX_UNPUBLISHED = "KRX 시세가 아직 공개되지 않았습니다. 잠시 후 다시 제출해 주세요"
+REJECT_KRX_FAILED = "KRX 조회에 실패했습니다. 잠시 후 다시 시도해 주세요"
+REJECT_NO_BASE_PRICE = "기준 종가를 조회할 수 없습니다(거래정지 또는 상장 전)"
+REJECT_BASE_DATE_CHANGED = "기준일이 바뀌었습니다. 다시 제출해 주세요"
+REJECT_STOCK_CHANGED = "종목 해석이 바뀌었습니다. 다시 제출해 주세요"
+REJECT_DUPLICATE = "이미 제출한 예측입니다(같은 종목·기준일)"
+REJECT_GROUP_CLOSED = "이미 판정된 그룹입니다"
+
 UNJUDGEABLE_REASON_TEXT = {
     "halted_suspected": "거래정지 또는 무거래 추정",
     "delisted_suspected": "상장폐지 추정",

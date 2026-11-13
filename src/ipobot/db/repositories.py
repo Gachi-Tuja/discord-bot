@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from ipobot.clock import utc_iso
 from ipobot.db.connection import transaction
-from ipobot.domain.models import DailyQuote, IpoListing, StockMasterEntry, SummaryRecord
+from ipobot.domain.models import DailyQuote, IpoListing, PredictionTarget, StockMasterEntry, SummaryRecord
 
 
 class RepositoryError(Exception):
@@ -217,6 +217,149 @@ class JudgmentRepo:
             )
 
 
+class DuplicatePredictionError(RepositoryError):
+    """같은 사용자·종목·기준일 예측이 이미 있다(R5)."""
+
+
+class GroupClosedError(RepositoryError):
+    """그룹 중 하나 이상이 이미 판정(done·unjudgeable)되었다(R12, U-GROUP)."""
+
+
+@dataclass(frozen=True)
+class NewPrediction:
+    discord_user_id: str
+    discord_user_name: str
+    stock_code: str
+    corp_name: str
+    market: str
+    base_date: date
+    base_price: int
+    base_market_cap: int
+    reason: str
+    raw_text: str
+    targets: tuple[tuple[PredictionTarget, date], ...]  # (예측, 목표일), 1·3·6·12 순서
+
+
+class PredictionRepo:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def confirm(self, p: NewPrediction, judgments: Sequence[NewJudgment], now: datetime) -> int:
+        """R8: predictions + targets + judgments upsert를 트랜잭션 1개로 저장하고 예측 id를 돌려준다.
+
+        중복이면 DuplicatePredictionError, 그룹에 pending이 아닌 판정이 있으면 GroupClosedError.
+        어느 경우든 예외면 전부 롤백된다.
+        """
+        ts = utc_iso(now)
+        base = p.base_date.isoformat()
+        with transaction(self._conn) as c:
+            try:
+                cur = c.execute(
+                    """
+                    INSERT INTO predictions (discord_user_id, discord_user_name, stock_code, corp_name, market,
+                                             base_date, base_price, base_market_cap, reason, raw_text, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        p.discord_user_id,
+                        p.discord_user_name,
+                        p.stock_code,
+                        p.corp_name,
+                        p.market,
+                        base,
+                        p.base_price,
+                        p.base_market_cap,
+                        p.reason,
+                        p.raw_text,
+                        ts,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE" in str(exc) and "predictions." in str(exc):
+                    raise DuplicatePredictionError(
+                        f"예측 중복 user={p.discord_user_id} code={p.stock_code} base={base}"
+                    ) from exc
+                raise
+            prediction_id = int(cur.lastrowid)
+            for target, target_date in p.targets:
+                c.execute(
+                    """
+                    INSERT INTO prediction_targets (prediction_id, horizon_months, target_date, pred_price,
+                                                    pred_market_cap, price_text, market_cap_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        prediction_id,
+                        target.horizon_months,
+                        target_date.isoformat(),
+                        target.pred_price,
+                        target.pred_market_cap,
+                        target.price_text,
+                        target.market_cap_text,
+                    ),
+                )
+            for j in judgments:
+                c.execute(
+                    """
+                    INSERT INTO judgments (stock_code, market, base_date, horizon_months, target_date,
+                                           judge_trade_date, status, next_attempt_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    ON CONFLICT (stock_code, base_date, horizon_months) DO NOTHING
+                    """,
+                    (
+                        j.stock_code,
+                        j.market,
+                        j.base_date.isoformat(),
+                        j.horizon_months,
+                        j.target_date.isoformat(),
+                        j.judge_trade_date.isoformat(),
+                        utc_iso(j.next_attempt_at),
+                        ts,
+                    ),
+                )
+            closed = c.execute(
+                "SELECT horizon_months, status FROM judgments "
+                "WHERE stock_code = ? AND base_date = ? AND status <> 'pending' ORDER BY horizon_months",
+                (p.stock_code, base),
+            ).fetchall()
+            if closed:
+                raise GroupClosedError(
+                    f"그룹 {p.stock_code}/{base} 판정됨: "
+                    + ", ".join(f"{r['horizon_months']}M={r['status']}" for r in closed)
+                )
+        return prediction_id
+
+    def exists(self, discord_user_id: str, stock_code: str, base_date: date) -> bool:
+        """R5 사전 검사. 최종 판단은 confirm의 UNIQUE다."""
+        row = self._conn.execute(
+            "SELECT 1 FROM predictions WHERE discord_user_id = ? AND stock_code = ? AND base_date = ?",
+            (discord_user_id, stock_code, base_date.isoformat()),
+        ).fetchone()
+        return row is not None
+
+    def group_closed(self, stock_code: str, base_date: date) -> bool:
+        """R12 사전 검사: 그룹에 pending이 아닌 판정 행이 있는가. 최종 판단은 confirm이다."""
+        row = self._conn.execute(
+            "SELECT 1 FROM judgments WHERE stock_code = ? AND base_date = ? AND status <> 'pending' LIMIT 1",
+            (stock_code, base_date.isoformat()),
+        ).fetchone()
+        return row is not None
+
+    def group_predictions(self, judgment_id: int) -> list[sqlite3.Row]:
+        """판정 행의 그룹 예측(R12): id, discord_user_name, corp_name, pred_price, pred_market_cap."""
+        return self._conn.execute(
+            """
+            SELECT p.id, p.discord_user_id, p.discord_user_name, p.corp_name, t.pred_price, t.pred_market_cap
+              FROM judgments j
+              JOIN predictions p ON p.stock_code = j.stock_code AND p.base_date = j.base_date
+              JOIN prediction_targets t ON t.prediction_id = p.id AND t.horizon_months = j.horizon_months
+             WHERE j.id = ?
+             ORDER BY p.id
+            """,
+            (judgment_id,),
+        ).fetchall()
+
+
 class CalendarRepo:
     """캘린더 계층 데이터: market_calendar_overrides, krx_closed_days."""
 
@@ -338,6 +481,13 @@ class StockMasterRepo:
         ).fetchone()
         return None if row is None else row["stock_code"]
 
+    def codes_for_name(self, corp_name: str) -> list[str]:
+        """corp_name이 정확히 같은 종목코드 목록(R7 2단계)."""
+        rows = self._conn.execute(
+            "SELECT stock_code FROM stock_master WHERE corp_name = ? ORDER BY stock_code", (corp_name,)
+        ).fetchall()
+        return [r["stock_code"] for r in rows]
+
 
 class IpoListingRepo:
     """상장 예정 종목(ipo_listings). DART 원문 추출 결과를 접수번호 단위로 캐시한다."""
@@ -350,6 +500,15 @@ class IpoListingRepo:
             "SELECT * FROM ipo_listings WHERE source_rcept_no = ? ORDER BY id DESC LIMIT 1", (rcept_no,)
         ).fetchone()
         return None if row is None else self._from_row(row)
+
+    def market_for_code(self, stock_code: str) -> str | None:
+        """종목코드의 상장 시장(가장 최근 상장일 기준). 모르면 None(R1 힌트)."""
+        row = self._conn.execute(
+            "SELECT market FROM ipo_listings WHERE stock_code = ? AND market IS NOT NULL "
+            "ORDER BY listing_date DESC, id DESC LIMIT 1",
+            (stock_code,),
+        ).fetchone()
+        return None if row is None else row["market"]
 
     def upsert_many(self, listings: Sequence[IpoListing], now: datetime) -> None:
         """트랜잭션 1회로 저장한다. 같은 회사의 다른 상장일 행(정정 전 일정)은 지운다."""

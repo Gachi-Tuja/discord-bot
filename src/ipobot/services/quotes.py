@@ -82,6 +82,23 @@ class QuoteService:
             return loaded
         return loaded is not None
 
+    async def find_by_name(
+        self, corp_name: str, trade_date: date, bypass_negative_cache: bool = False
+    ) -> list[DailyQuote] | None | FetchError:
+        """R7 3단계: 그 날 3시장 스냅샷에서 `ISU_NM`이 정확히 같은 행.
+
+        3시장이 모두 공개됐을 때만 목록(0개 가능)을 돌려준다. 하나라도 빈 응답이면 None(스냅샷 불완전),
+        조회 실패면 FetchError(인증 우선)다.
+        """
+        results = await asyncio.gather(*(self._load(trade_date, m, bypass_negative_cache) for m in MARKETS))
+        errors = [r for r in results if isinstance(r, FetchError)]
+        if errors:
+            return FetchError("auth") if any(e.kind == "auth" for e in errors) else FetchError("transient")
+        if any(r is None for r in results):
+            return None
+        name = corp_name.strip()
+        return [q for day in results for q in day.quotes.values() if q.corp_name.strip() == name]
+
     async def day_obs(
         self,
         code: str,
