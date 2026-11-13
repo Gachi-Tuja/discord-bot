@@ -104,6 +104,27 @@ class SummaryRecord:
     retry_after: datetime | None
 
 
+@dataclass(frozen=True)
+class PredictionTarget:
+    """한 시점의 예측값(prediction_targets 한 행의 입력). 금액은 원 단위 양의 정수."""
+
+    horizon_months: int
+    pred_price: int
+    pred_market_cap: int
+    price_text: str
+    market_cap_text: str
+
+
+@dataclass(frozen=True)
+class ParsedPrediction:
+    """검증된 예측 파싱 결과(S10). 날짜 없음. targets는 1·3·6·12개월 순서로 정확히 4개."""
+
+    stock_query: str
+    reason: str
+    targets: tuple[PredictionTarget, ...]
+    warnings: tuple[str, ...] = ()
+
+
 # --- DayObs: 한 종목·한 거래일의 관측(R9) ---
 
 
