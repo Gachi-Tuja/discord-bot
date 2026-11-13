@@ -14,7 +14,14 @@ from ipobot.db.repositories import JOB_LAST_ERROR_SENDING, JobRunRepo, PartOrder
 from ipobot.domain.models import IpoListing
 from ipobot.services.ipo_digest import DartUnavailable
 from ipobot.services.delivery import NONCE_RESEND_WINDOW
-from ipobot.services.weekly import LAST_ERROR_SENDING, WeeklySchedule, WeeklyService, job_key, week_key, weekly_due
+from ipobot.services.weekly import (
+    WeeklySchedule,
+    WeeklyService,
+    job_key,
+    resumes_in_nonce_window,
+    week_key,
+    weekly_due,
+)
 from tests.conftest import FakeClock
 from tests.fakes.discord_channel import FakeDiscord, forbidden
 
@@ -132,7 +139,7 @@ def test_weekly_due_sending_retries_without_backoff_inside_grace():
 
 def test_weekly_due_sending_bypass_bounded_by_nonce_window():
     # 첫 전송 시도부터 NONCE_RESEND_WINDOW(4분) 안에서만 백오프를 건너뛰고, 그 뒤는 일반 백오프를 따른다.
-    sending = {"status": "failed", "ran_at": utc_iso(at(FRI, 18)), "last_error": LAST_ERROR_SENDING}
+    sending = {"status": "failed", "ran_at": utc_iso(at(FRI, 18)), "last_error": JOB_LAST_ERROR_SENDING}
     assert weekly_due(at(FRI, 18, 3), sending, SCHEDULE)
     assert at(FRI, 18) + NONCE_RESEND_WINDOW == at(FRI, 18, 4)
     assert not weekly_due(at(FRI, 18, 4), sending, SCHEDULE)
@@ -140,8 +147,11 @@ def test_weekly_due_sending_bypass_bounded_by_nonce_window():
     assert weekly_due(at(FRI, 18, 15), sending, SCHEDULE)
 
 
-def test_sending_literal_is_shared_with_repository():
-    assert LAST_ERROR_SENDING == JOB_LAST_ERROR_SENDING == "sending"
+def test_sending_resume_outside_window_when_clock_steps_back():
+    sending = {"status": "failed", "ran_at": utc_iso(at(FRI, 18, 2)), "last_error": JOB_LAST_ERROR_SENDING}
+    assert resumes_in_nonce_window(at(FRI, 18, 3), sending)
+    assert not resumes_in_nonce_window(at(FRI, 18, 1), sending)
+    assert not weekly_due(at(FRI, 18, 1), sending, SCHEDULE)
 
 
 # ---------------------------------------------------------------- 실행

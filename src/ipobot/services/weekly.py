@@ -32,7 +32,6 @@ from ipobot.services.ipo_digest import DartUnavailable, digest_items
 log = logging.getLogger(__name__)
 
 LAST_ERROR_DART = "dart_unavailable"
-LAST_ERROR_SENDING = JOB_LAST_ERROR_SENDING
 
 
 @dataclass(frozen=True)
@@ -102,8 +101,9 @@ def resumes_in_nonce_window(now: datetime, last_run: Mapping[str, Any] | None) -
     return (
         last_run is not None
         and last_run["status"] == "failed"
-        and last_run["last_error"] == LAST_ERROR_SENDING
-        and now < _ran_at(last_run) + NONCE_RESEND_WINDOW
+        and last_run["last_error"] == JOB_LAST_ERROR_SENDING
+        # 시계가 ran_at보다 뒤로 가면 창 밖으로 본다(경과 시간을 알 수 없으므로 백오프를 따른다).
+        and _ran_at(last_run) <= now < _ran_at(last_run) + NONCE_RESEND_WINDOW
     )
 
 
