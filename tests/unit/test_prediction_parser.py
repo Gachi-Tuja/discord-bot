@@ -237,3 +237,22 @@ async def test_adapter_api_error_raises_llm_error():
     parser, _ = parser_with(anthropic.APITimeoutError(request=request))
     with pytest.raises(LlmError):
         await parser.parse(ORIGINAL_TEXT)
+
+
+def test_huge_amount_texts_keep_messages_within_discord_limit():
+    payload = original_payload()
+    for t in payload["targets"]:
+        t["price_text"] = "1" * 5000 + "원"
+        t["market_cap_text"] = "30,000원" + " " * 5000 + "x" * 5000
+    result = validate_prediction(payload)
+    text = result.message if hasattr(result, "message") else "\n".join(result.warnings)
+    assert len(text) <= 2000, len(text)
+    assert "1" * 41 not in text
+
+
+def test_huge_unparseable_texts_keep_warnings_short():
+    long = "대략 이 정도" + "~" * 5000
+    result = validate_prediction(with_target(original_payload(), 12, market_cap_text=long))
+    assert isinstance(result, ParsedPrediction)
+    (warning,) = result.warnings
+    assert len(warning) < 100 and warning.count("~") < 40

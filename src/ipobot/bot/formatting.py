@@ -22,6 +22,8 @@ EMBED_DESCRIPTION_LIMIT = 4096
 FIELD_NAME_LIMIT = 256
 FIELD_VALUE_LIMIT = 1024
 ELLIPSIS = "…"
+# 거부·경고 문구에 그대로 옮기는 사용자 금액 텍스트의 최대 길이(넘으면 잘라 「…」를 붙인다).
+AMOUNT_ECHO_LIMIT = 40
 
 NO_UPCOMING_IPOS = "향후 2주간 상장 예정 종목이 없습니다"
 DIGEST_TITLE = "향후 2주간 상장 예정 종목"
@@ -95,6 +97,16 @@ def parts_from_json(payload: str) -> list[Part]:
 
 def _truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - len(ELLIPSIS)] + ELLIPSIS
+
+
+def clip_content(text: str, limit: int = CONTENT_LIMIT) -> str:
+    """디스코드 메시지 한 건(기본 2000자)에 들어가도록 자른다. 넘으면 끝을 「…」로 바꾼다."""
+    return _truncate(text, limit)
+
+
+def _echo_amount(text: str) -> str:
+    text = text.strip()
+    return text if len(text) <= AMOUNT_ECHO_LIMIT else text[:AMOUNT_ECHO_LIMIT] + ELLIPSIS
 
 
 def format_won(value: int) -> str:
@@ -348,11 +360,11 @@ def auth_delay_parts(corp_name: str) -> list[Part]:
 
 
 def amount_mismatch_warning(text: str, interpreted: int) -> str:
-    return f"금액 해석 불일치: 텍스트 {text} ↔ 해석 {format_krw(interpreted)}"
+    return f"금액 해석 불일치: 텍스트 {_echo_amount(text)} ↔ 해석 {format_krw(interpreted)}"
 
 
 def amount_unparseable_warning(text: str) -> str:
-    return f"⚠️ 금액 텍스트를 해석하지 못했습니다: {text} (확정은 가능)"
+    return f"⚠️ 금액 텍스트를 해석하지 못했습니다: {_echo_amount(text)} (확정은 가능)"
 
 
 def implied_shares_warning_text(pred_price: int, pred_market_cap: int, base_listed_shares: int) -> str:

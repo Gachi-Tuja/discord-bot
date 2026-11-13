@@ -18,6 +18,7 @@ from ipobot.bot.formatting import (
     CONFIRM_RESULT_SCHEDULE,
     REJECT_KRX_FAILED,
     REJECT_KRX_UNPUBLISHED,
+    clip_content,
     format_krw,
     format_won,
 )
@@ -111,12 +112,12 @@ def preview_text(draft: Draft) -> str:
     lines += ["", f"이유: {reason}"]
     lines += [w if w.startswith("⚠️") else f"⚠️ {w}" for w in draft.warnings]
     lines += ["", CONFIRM_RESULT_SCHEDULE, "확인을 누르면 수정·삭제할 수 없습니다."]
-    return "\n".join(lines)
+    return clip_content("\n".join(lines))
 
 
 def confirmed_text(confirmed: Confirmed) -> str:
     base = confirmed.draft.base
-    return (
+    return clip_content(
         f"✅ {confirmed.draft.discord_user_name}님의 {base.corp_name}({base.stock_code}) 예측이 확정되었습니다 "
         f"(기준일 {base.trade_date.isoformat()}, 기준 종가 {format_won(base.close_price)}).\n"
         f"{CONFIRM_RESULT_SCHEDULE}"
@@ -170,7 +171,7 @@ class ConfirmView(discord.ui.View):
             return
         if isinstance(result, Rejected) and result.message in RETRYABLE_REJECTIONS:
             self._busy = False
-            await interaction.followup.send(result.message, ephemeral=True)
+            await interaction.followup.send(clip_content(result.message), ephemeral=True)
             return
         self.store.resolve(self.draft_id)
         self.stop()
@@ -179,7 +180,7 @@ class ConfirmView(discord.ui.View):
         if isinstance(result, Confirmed):
             await interaction.followup.send(confirmed_text(result))
         else:
-            await interaction.followup.send(result.message, ephemeral=True)
+            await interaction.followup.send(clip_content(result.message), ephemeral=True)
 
     async def on_cancel(self, interaction: discord.Interaction) -> None:
         # 확정이 진행 중이면 취소를 거부한다(저장 여부를 거짓으로 알리지 않는다). 그렇지 않으면 수정 전에

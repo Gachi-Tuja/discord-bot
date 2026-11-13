@@ -214,3 +214,21 @@ async def test_confirm_after_cancel_does_not_save():
     await view.on_cancel(again)
     again.response.edit_message.assert_not_awaited()
     again.response.send_message.assert_awaited_once_with(EXPIRED_TEXT, ephemeral=True)
+
+
+def test_preview_with_huge_texts_fits_discord_message():
+    from dataclasses import replace
+
+    draft = make_draft()
+    huge = "가" * 5000
+    parsed = replace(draft.parsed, reason=huge)
+    draft = replace(draft, parsed=parsed, discord_user_name=huge, warnings=tuple(huge for _ in range(8)))
+    assert len(preview_text(draft)) <= 2000
+
+
+async def test_long_rejection_message_is_clipped_to_2000():
+    view, *_ = make_view(AsyncMock(return_value=Rejected("거" * 5000)))
+    inter = interaction()
+    await view.on_confirm(inter)
+    (text,), kwargs = inter.followup.send.await_args
+    assert len(text) <= 2000 and kwargs == {"ephemeral": True}

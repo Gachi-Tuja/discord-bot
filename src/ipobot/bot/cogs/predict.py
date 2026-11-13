@@ -13,6 +13,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from ipobot.bot.errors import report_interaction_error
+from ipobot.bot.formatting import clip_content
 from ipobot.bot.views import ConfirmView, DraftStore, preview_text
 from ipobot.services.predictions import Draft, PredictionService
 from ipobot.services.summaries import LlmError
@@ -64,7 +65,7 @@ class PredictCog(commands.Cog):
             await interaction.followup.send(LLM_FAILED_TEXT, ephemeral=True)
             return
         if not isinstance(result, Draft):
-            await interaction.followup.send(result.message, ephemeral=True)
+            await interaction.followup.send(clip_content(result.message), ephemeral=True)
             return
         draft_id = self.store.put(result)
         view = ConfirmView(draft_id, user.id, self.store, self.service.confirm_draft)

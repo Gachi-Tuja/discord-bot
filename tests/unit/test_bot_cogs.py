@@ -110,3 +110,11 @@ async def test_submission_draft_posts_preview_with_author_only_confirm_view():
     assert "123456" in text
     assert store.get(view.draft_id) is draft
     view.stop()
+
+
+async def test_long_submission_rejection_is_clipped_to_2000():
+    cog, _, _ = predict_cog(Rejected("거" * 5000))
+    inter = interaction()
+    await cog.handle_submission(inter, "text")
+    (text,), kwargs = inter.followup.send.await_args
+    assert len(text) <= 2000 and kwargs == {"ephemeral": True}

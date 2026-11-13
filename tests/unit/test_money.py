@@ -78,3 +78,9 @@ def test_cross_check_unparseable_only_warns():
 def test_range_invariant():
     with pytest.raises(ValueError):
         Range(2, 1)
+
+
+def test_overlong_text_is_unparseable_not_crash():
+    assert isinstance(parse_krw_text("1" * 5000 + "원"), Unparseable)
+    assert cross_check("1" * 5000, 1).status == "unparseable"
+    assert parse_krw_text("  31,500원  ") == Exact(31_500)

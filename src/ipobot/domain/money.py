@@ -39,6 +39,8 @@ _NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
 _TERM_RE = re.compile(rf"({_NUMBER})([천백십])?([조억만])?")
 _RANGE_SPLIT_RE = re.compile(r"\s*[~～〜]\s*")
 _PREFIXES = ("약",)
+# 금액 표현은 짧다. 이보다 긴 텍스트는 해석하지 않는다(거대한 숫자열의 int 변환 한도·비용 방지).
+MAX_TEXT_LENGTH = 100
 _SUFFIXES = ("원",)
 
 
@@ -103,6 +105,8 @@ def parse_krw_text(text: str) -> ParsedAmount:
     """금액 텍스트를 Exact/Range/Unparseable로 해석한다."""
     if not isinstance(text, str):
         return Unparseable(str(text))
+    if len(text.strip()) > MAX_TEXT_LENGTH:
+        return Unparseable(text)
     body = _strip_decor(text)
     pieces = _RANGE_SPLIT_RE.split(body)
     if len(pieces) == 1:

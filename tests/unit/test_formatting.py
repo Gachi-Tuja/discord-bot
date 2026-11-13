@@ -11,6 +11,7 @@ from ipobot.bot.formatting import (
     NO_UPCOMING_IPOS,
     Part,
     amount_mismatch_warning,
+    clip_content,
     amount_unparseable_warning,
     auth_delay_parts,
     digest_parts,
@@ -246,3 +247,18 @@ def test_warning_texts():
     assert "확정은 가능" in amount_unparseable_warning("대략 많이")
     w = implied_shares_warning_text(10_000, 1_000_000_000_000, 1_000_000)
     assert "1조원" in w and "100억원" in w and "10배" in w
+
+
+def test_amount_warnings_truncate_echoed_text():
+    long = "3" * 5000
+    mismatch = amount_mismatch_warning(long, 30_000)
+    unparseable = amount_unparseable_warning("  " + "대략" * 2500 + "  ")
+    assert "3" * 40 + "…" in mismatch and "3" * 41 not in mismatch
+    assert len(mismatch) < 100 and len(unparseable) < 100
+    assert amount_mismatch_warning(" 3만원 ", 30_000) == "금액 해석 불일치: 텍스트 3만원 ↔ 해석 3만원"
+
+
+def test_clip_content_bounds_to_2000():
+    assert clip_content("가" * 2000) == "가" * 2000
+    clipped = clip_content("가" * 5000)
+    assert len(clipped) == 2000 and clipped.endswith("…")
