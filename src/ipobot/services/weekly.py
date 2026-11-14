@@ -115,6 +115,10 @@ class SummarySource(Protocol):
     async def summaries_for(self, listings: Sequence[IpoListing]) -> dict[str, str | None]: ...
 
 
+# 기록 조회 `after`는 배타적이다. 슬롯 정각 게시도 찾도록 하한을 조금 앞당긴다.
+DEDUPE_MARGIN = timedelta(minutes=1)
+
+
 @dataclass
 class WeeklyService:
     conn: sqlite3.Connection
@@ -160,6 +164,8 @@ class WeeklyService:
             nonce_base=f"w{week_key(post_date)}",
             start=start,
             on_sent=lambda i, message_id: self.jobs.mark_part_sent(key, i, message_id),
+            # 이전 시도가 있었으면(크래시·기록 실패·모호한 실패) start 파트가 이미 게시됐는지 채널 기록으로 확인한다.
+            dedupe_after=slot - DEDUPE_MARGIN if row is not None else None,
             **self.delivery_options,
         )
         if isinstance(outcome, Delivered):

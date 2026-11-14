@@ -298,7 +298,7 @@ async def test_crash_before_first_part_recorded_retries_next_tick_without_duplic
     await restarted.run()
     row = restarted.row()
     assert (row["status"], row["parts_sent"]) == ("done", 1)
-    assert e.fake.nonces == ["w2026-W05:0", "w2026-W05:0"]
+    assert e.fake.nonces == ["w2026-W05:0"]  # 채널 기록에서 기존 게시를 찾아 재전송하지 않음
     assert len(e.fake.posted) == 1
     assert e.digest.calls == [FRI]
     e.conn.close()
@@ -306,8 +306,7 @@ async def test_crash_before_first_part_recorded_retries_next_tick_without_duplic
 
 
 async def test_persistent_progress_record_failure_is_throttled_by_backoff(tmp_path, monkeypatch):
-    # 진행 기록이 grace 내내 실패해도 매 틱 재전송하지 않는다: nonce 창(첫 시도 기준 4분) 안 재시도 뒤 백오프.
-    # 디스코드 중복 제거 창 밖 재전송만 새 공개 게시가 되므로 공개 게시는 백오프당 최대 1건이다.
+    # 진행 기록이 grace 내내 실패해도 다시 게시하지 않는다: 재시도마다 채널 기록에서 기존 게시를 찾는다.
     e = Env(tmp_path)
 
     def fail(key, i, message_id):
@@ -321,11 +320,9 @@ async def test_persistent_progress_record_failure_is_throttled_by_backoff(tmp_pa
             await e.run(at(FRI, 18) + timedelta(minutes=m))
         except RuntimeError:
             failures += 1
-    assert failures == len(e.fake.calls)  # 전송마다 진행 기록 실패
-    bound = SCHEDULE.grace // SCHEDULE.retry_backoff + 2
-    assert len(e.fake.posted) <= bound, (len(e.fake.posted), len(e.fake.calls))
-    # 백오프 주기마다 첫 시도 + 창 안(4분) 재시도 3회 = 최대 4회 전송
-    assert len(e.fake.calls) <= 4 * bound
+    assert failures > 1
+    assert len(e.fake.calls) == 1
+    assert len(e.fake.posted) == 1
     assert e.row()["last_error"] == "sending"
     e.conn.close()
 
@@ -377,3 +374,25 @@ def test_job_run_repo_guards(tmp_path):
         repo.mark_send_failed(KEY, "send_forbidden")
     assert repo.get(KEY)["status"] == "done"
     conn.close()
+
+
+async def test_record_lost_beyond_nonce_window_is_not_reposted(tmp_path, monkeypatch):
+    # 기록 실패 뒤 nonce 중복 제거 창(5분)을 넘겨 재시도해도 채널 기록 확인으로 다시 게시하지 않는다.
+    e = Env(tmp_path)
+    real = e.svc.jobs.mark_part_sent
+
+    def crash(key, i, message_id):
+        raise RuntimeError("crash")
+
+    monkeypatch.setattr(e.svc.jobs, "mark_part_sent", crash)
+    with pytest.raises(RuntimeError):
+        await e.run()
+    monkeypatch.setattr(e.svc.jobs, "mark_part_sent", real)
+    later = at(FRI, 18, 30)
+    e.clock.set(later)
+    await e.run(later)
+    row = e.row()
+    assert (row["status"], row["parts_sent"]) == ("done", 1)
+    assert len(e.fake.posted) == 1
+    assert len(e.fake.calls) == 1
+    e.conn.close()

@@ -24,13 +24,13 @@ import logging
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Protocol
 
 import discord
 
 from ipobot.bot.formatting import auth_delay_parts, result_parts
-from ipobot.clock import Clock, today_kst
+from ipobot.clock import KST, Clock, today_kst
 from ipobot.db.repositories import CalendarRepo, JudgmentRepo, PredictionRepo
 from ipobot.domain.calendar import TradingCalendar
 from ipobot.domain.dates import first_open_on_or_after
@@ -286,6 +286,11 @@ class JudgingService:
         resume = first + self._interval
         return resume if now < resume else None
 
+    @staticmethod
+    def _dedupe_after(row: Mapping[str, Any]) -> datetime:
+        """공지·안내는 목표일 이전에 게시될 수 없다. 첫 시도 시각은 메모리뿐이라 재시작에도 안전한 하한을 쓴다."""
+        return datetime.combine(date.fromisoformat(row["target_date"]), time(0), KST)
+
     async def _announce(self, row: sqlite3.Row, now: datetime) -> None:
         jid = row["id"]
         parts = result_parts(row, self.judgments.results(jid), self.predictions.group_predictions(jid))
@@ -295,6 +300,7 @@ class JudgingService:
             nonce_base=f"j{jid}",
             start=row["announce_parts_sent"],
             on_sent=lambda i, message_id: self.judgments.mark_part_sent(jid, i, message_id, now),
+            dedupe_after=self._dedupe_after(row),
             **self.delivery_options,
         )
         if isinstance(outcome, Delivered):
@@ -317,6 +323,7 @@ class JudgingService:
             nonce_base=f"a{jid}",
             start=row["auth_delay_parts_sent"],
             on_sent=lambda i, _message_id: self.judgments.mark_auth_delay_part_sent(jid, i, now),
+            dedupe_after=self._dedupe_after(row),
             **self.delivery_options,
         )
         if isinstance(outcome, Delivered):

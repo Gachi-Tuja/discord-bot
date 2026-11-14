@@ -490,8 +490,8 @@ async def test_on_sent_failure_retries_next_tick_without_backoff(env, monkeypatc
     assert (row["announce_parts_sent"], row["announced_at"], row["announce_error"]) == (0, None, None)
     assert row["next_attempt_at"] == utc_iso(at(D2))  # 백오프 없음
     await env.tick(at(D2, 9, 1))
-    assert env.fake.nonces == [f"j{jid}:0", f"j{jid}:0"]
-    assert len(env.fake.posted) == 1  # 같은 nonce 재시도는 창 안에서 중복 제거
+    assert env.fake.nonces == [f"j{jid}:0"]  # 채널 기록에서 기존 게시를 찾아 재전송하지 않음
+    assert len(env.fake.posted) == 1
     assert env.row(jid)["announced_at"] is not None
 
 
@@ -547,7 +547,7 @@ async def test_auth_notice_single_on_sent_crash_retries_next_tick(env, monkeypat
     for m in range(3):
         env.clock.set(at(D2, 9, m))
         await env.svc.run_announcements()
-    assert env.fake.nonces == [f"a{jid}:0", f"a{jid}:0"]
+    assert env.fake.nonces == [f"a{jid}:0"]
     assert len(env.fake.posted) == 1
     assert env.row(jid)["auth_delay_notified_at"] is not None
 

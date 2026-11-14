@@ -342,13 +342,13 @@ async def test_crash_after_send_before_record_dedupes_by_nonce(h, monkeypatch):
     assert (row["status"], row["announce_parts_sent"], row["announced_at"]) == ("done", 0, None)
 
     h.crash_restart()
-    await h.tick(at(ANNOUNCE_DAY, 9, 2))  # nonce 중복 제거 창(5분) 안
-    assert h.result.nonces == [f"j{jid}:0", f"j{jid}:0"]
+    await h.tick(at(ANNOUNCE_DAY, 9, 2))
+    assert h.result.nonces == [f"j{jid}:0"]  # 채널 기록에서 기존 게시를 찾아 재전송하지 않음
     assert len(h.result.posted) == 1
     row = h.row(jid)
     assert (row["announce_parts_sent"], row["announced_at"] is not None) == (1, True)
     await h.tick(at(ANNOUNCE_DAY, 9, 30))
-    assert len(h.result.calls) == 2
+    assert len(h.result.calls) == 1
 
 
 # ---------------------------------------------------------------- 4. 2파트 공지, 0번 기록 뒤 크래시
@@ -551,9 +551,9 @@ async def test_auth_delay_notice_crash_after_send_before_record_is_resent_once(h
     row = h.row(jid)
     assert row["auth_delay_notified_at"] is not None and row["auth_delay_parts_sent"] == 1
     assert posted(h.result) == [f"a{jid}:0"]
-    assert [nonce for nonce, _ in h.result.calls] == [f"a{jid}:0", f"a{jid}:0"]
+    assert [nonce for nonce, _ in h.result.calls] == [f"a{jid}:0"]  # 기존 게시를 찾아 재전송 생략
     await h.tick(at(ANNOUNCE_DAY, 9, 30))
-    assert len(h.result.calls) == 2
+    assert len(h.result.calls) == 1
 
 
 async def test_auth_delay_notice_crash_before_send_is_sent_after_restart(h, monkeypatch):
