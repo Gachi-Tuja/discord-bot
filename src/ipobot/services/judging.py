@@ -53,7 +53,7 @@ from ipobot.domain.models import (
 )
 from ipobot.domain.scoring import GroupEntry, InvalidActual, rank_group
 from ipobot.services import alerts
-from ipobot.services.delivery import NONCE_RESEND_WINDOW, Delivered, deliver_parts
+from ipobot.services.delivery import NONCE_RESEND_WINDOW, Delivered, RecordFailureGuard
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +106,7 @@ class JudgingService:
     # 전송 중 예외(진행 기록 실패 등)가 난 공지의 첫 전송 시도 시각: judgment_id → 시각. nonce 재전송 창 판정용.
     _announce_first_try: dict[int, datetime] = field(default_factory=dict, init=False, repr=False)
     _auth_first_try: dict[int, datetime] = field(default_factory=dict, init=False, repr=False)
+    _record_guard: RecordFailureGuard = field(default_factory=RecordFailureGuard, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.judgments = JudgmentRepo(self.conn)
@@ -294,9 +295,11 @@ class JudgingService:
     async def _announce(self, row: sqlite3.Row, now: datetime) -> None:
         jid = row["id"]
         parts = result_parts(row, self.judgments.results(jid), self.predictions.group_predictions(jid))
-        outcome = await deliver_parts(
-            self.channel,
-            parts,
+        outcome = await self._record_guard.deliver(
+            ("announce", jid),
+            self._alert,
+            channel=self.channel,
+            parts=parts,
             nonce_base=f"j{jid}",
             start=row["announce_parts_sent"],
             on_sent=lambda i, message_id: self.judgments.mark_part_sent(jid, i, message_id, now),
@@ -317,9 +320,11 @@ class JudgingService:
         preds = self.predictions.group_predictions(jid)
         corp = preds[0]["corp_name"] if preds else row["stock_code"]
         parts = auth_delay_parts(corp)
-        outcome = await deliver_parts(
-            self.channel,
-            parts,
+        outcome = await self._record_guard.deliver(
+            ("auth", jid),
+            self._alert,
+            channel=self.channel,
+            parts=parts,
             nonce_base=f"a{jid}",
             start=row["auth_delay_parts_sent"],
             on_sent=lambda i, _message_id: self.judgments.mark_auth_delay_part_sent(jid, i, now),

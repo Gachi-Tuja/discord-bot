@@ -26,7 +26,8 @@ from ipobot.bot.formatting import digest_parts, parts_from_json, parts_to_json
 from ipobot.clock import KST, Clock
 from ipobot.db.repositories import JOB_LAST_ERROR_SENDING, JobRunRepo
 from ipobot.domain.models import IpoListing
-from ipobot.services.delivery import NONCE_RESEND_WINDOW, Delivered, deliver_parts
+from ipobot.services import alerts
+from ipobot.services.delivery import NONCE_RESEND_WINDOW, Delivered, RecordFailureGuard
 from ipobot.services.ipo_digest import DartUnavailable, digest_items
 
 log = logging.getLogger(__name__)
@@ -130,6 +131,7 @@ class WeeklyService:
     # deliver_parts 추가 인자(테스트의 sleep·retry_delays 주입용)
     delivery_options: Mapping[str, Any] = field(default_factory=dict)
     _skip_logged: set[str] = field(default_factory=set, init=False, repr=False)
+    _record_guard: RecordFailureGuard = field(default_factory=RecordFailureGuard, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.jobs = JobRunRepo(self.conn)
@@ -158,9 +160,11 @@ class WeeklyService:
             start = 0
         # 창 안 재개는 첫 시도 시각을 유지해야 진행 기록이 계속 실패할 때 창이 끝나고 백오프로 떨어진다.
         self.jobs.begin_sending(key, parts_to_json(parts), now, keep_ran_at=resumes_in_nonce_window(now, row))
-        outcome = await deliver_parts(
-            self.channel,
-            parts,
+        outcome = await self._record_guard.deliver(
+            key,
+            self.delivery_options.get("alert") or alerts.operator_alert,
+            channel=self.channel,
+            parts=parts,
             nonce_base=f"w{week_key(post_date)}",
             start=start,
             on_sent=lambda i, message_id: self.jobs.mark_part_sent(key, i, message_id),

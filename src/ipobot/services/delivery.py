@@ -45,6 +45,8 @@ NONCE_DEDUPE_WINDOW = timedelta(minutes=5)
 NONCE_RESEND_WINDOW = NONCE_DEDUPE_WINDOW - timedelta(minutes=1)
 # 재전송 전 중복 확인에서 훑는 최근 메시지 수(디스코드 history 1회 요청 상한).
 HISTORY_SCAN_LIMIT = 100
+# 같은 대상의 진행 기록이 이 횟수만큼 연속 실패하면 운영 경보를 내고, 기록 확인 없이는 다시 보내지 않는다.
+PROGRESS_FAILURE_LIMIT = 2
 
 
 class ProgressRecordError(RuntimeError):
@@ -225,3 +227,32 @@ async def _find_posted(
         log.warning("채널 기록 확인 실패 error=%r", e)
     return _UNAVAILABLE
 
+
+class RecordFailureGuard:
+    """대상별 연속 진행 기록 실패 계수(메모리). 한도에 닿으면 경보 1회, 이후 `held`가 참이다."""
+
+    def __init__(self, limit: int = PROGRESS_FAILURE_LIMIT) -> None:
+        self.limit = limit
+        self._counts: dict[object, int] = {}
+
+    def held(self, key: object) -> bool:
+        return self._counts.get(key, 0) >= self.limit
+
+    def failed(self, key: object, alert: AlertFn) -> None:
+        count = self._counts.get(key, 0) + 1
+        self._counts[key] = count
+        if count == self.limit:
+            alert("progress_record_failing", f"target={key} consecutive={count}")
+
+    def clear(self, key: object) -> None:
+        self._counts.pop(key, None)
+
+    async def deliver(self, key: object, notify: AlertFn, /, **kwargs: Any) -> Delivered | Failed:
+        """`deliver_parts` 래퍼. 연속 기록 실패 중에는 채널 기록을 확인하지 못하면 다시 보내지 않는다."""
+        try:
+            outcome = await deliver_parts(require_dedupe=self.held(key), **kwargs)
+        except ProgressRecordError:
+            self.failed(key, notify)
+            raise
+        self.clear(key)
+        return outcome

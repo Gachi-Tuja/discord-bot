@@ -12,7 +12,14 @@ import discord
 import pytest
 
 from ipobot.bot.formatting import Part
-from ipobot.services.delivery import Delivered, Failed, ProgressRecordError, deliver_parts, part_nonce
+from ipobot.services.delivery import (
+    Delivered,
+    Failed,
+    ProgressRecordError,
+    RecordFailureGuard,
+    deliver_parts,
+    part_nonce,
+)
 from tests.fakes.discord_channel import FakeDiscord, Resp, forbidden, not_found, server_error
 
 
@@ -377,3 +384,36 @@ async def test_dedupe_found_but_record_fails_raises_without_sending(fake_clock):
         await deliver_parts(fake.channel(), [P("a")], "j7", on_sent=on_sent, dedupe_after=since)
     assert len(fake.calls) == 1
     assert len(fake.posted) == 1
+
+
+# ------------------------------------------------- 연속 진행 기록 실패 가드
+
+
+async def test_record_guard_alerts_once_and_holds_until_success(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    guard = RecordFailureGuard(limit=2)
+    alerts = []
+
+    def notify(kind, detail):
+        alerts.append(kind)
+        return True
+
+    def fail(i, mid):
+        raise RuntimeError("db")
+
+    kwargs = dict(channel=fake.channel(), parts=[P("a")], nonce_base="j7")
+    for _ in range(3):
+        with pytest.raises(ProgressRecordError):
+            await guard.deliver("k", notify, on_sent=fail, dedupe_after=fake_clock.now() - timedelta(minutes=1), **kwargs)
+    assert alerts == ["progress_record_failing"]
+    assert guard.held("k")
+    assert len(fake.calls) == 1  # 이후 재시도는 채널 기록에서 기존 게시를 찾았다
+
+    # 보류 중 기록 조회가 실패하면 보내지 않는다.
+    fake.history_script = [server_error()]
+    result = await guard.deliver("k", notify, dedupe_after=fake_clock.now(), **kwargs)
+    assert result == Failed("history_unavailable", index=0)
+    assert len(fake.calls) == 1
+
+    await guard.deliver("k", notify, on_sent=lambda i, mid: None, dedupe_after=fake_clock.now() - timedelta(minutes=1), **kwargs)
+    assert not guard.held("k")
