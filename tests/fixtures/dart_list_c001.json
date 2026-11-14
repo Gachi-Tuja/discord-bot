@@ -1,11 +1,11 @@
 {
   "_provisional": true,
-  "_note": "SYNTHETIC provisional fixture (S0a). Shape follows OpenDART developer guide; replace with real response when DART real-key verification is done (PENDING).",
+  "_note": "SYNTHETIC fixture in the OpenDART list.json shape. One IPO company has both an 증권신고서 (summary source) and a 증권발행실적보고서 (listing-date source); the other has only an amended 증권신고서 and is not in the digest yet.",
   "status": "000",
   "message": "정상",
   "page_no": 1,
   "page_count": 100,
-  "total_count": 2,
+  "total_count": 3,
   "total_page": 1,
   "list": [
     {
@@ -14,9 +14,20 @@
       "stock_code": "",
       "corp_cls": "E",
       "report_nm": "증권신고서(지분증권)",
-      "rcept_no": "20261020000123",
+      "rcept_no": "20261001000077",
       "flr_nm": "가치토자바이오",
-      "rcept_dt": "20261020",
+      "rcept_dt": "20261001",
+      "rm": ""
+    },
+    {
+      "corp_code": "01987654",
+      "corp_name": "가치토자바이오",
+      "stock_code": "",
+      "corp_cls": "E",
+      "report_nm": "증권발행실적보고서",
+      "rcept_no": "20261110000123",
+      "flr_nm": "가치토자바이오",
+      "rcept_dt": "20261110",
       "rm": ""
     },
     {

@@ -180,7 +180,7 @@ def test_digest_fields_show_name_date_market_summary_only():
         date(2026, 11, 13),
     )
     e = only_embed(parts[0])
-    assert e["title"] == "향후 2주간 상장 예정 종목 (2026-11-13 기준)"
+    assert e["title"] == "향후 1주간 상장 예정 종목 (2026-11-13 기준)"
     assert e["fields"] == [
         {"name": "종목01 · 2026-11-20 · 시장 미정", "value": "요약 없음", "inline": False},
         {"name": "종목02 · 2026-11-21 · KOSDAQ", "value": "한 줄 요약", "inline": False},
@@ -216,7 +216,7 @@ def test_payload_json_round_trip_and_kwargs():
     kw = restored[0].kwargs
     assert set(kw) == {"embeds"}
     assert isinstance(kw["embeds"][0], discord.Embed)
-    assert kw["embeds"][0].title == "향후 2주간 상장 예정 종목 (2026-11-13 기준)"
+    assert kw["embeds"][0].title == "향후 1주간 상장 예정 종목 (2026-11-13 기준)"
     assert restored[-1].kwargs == {"content": "x"}
 
 

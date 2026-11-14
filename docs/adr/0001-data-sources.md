@@ -22,10 +22,17 @@
   2. `estkRs.json`(지분증권 주요정보)으로 청약기일(`sbd`)·납입기일(`pymd`)을 얻는다.
      **OpenDART 개발가이드상 `estkRs.json`에는 상장예정일 필드가 없다.**
   3. 상장예정일은 `document.xml`(원문 zip) 텍스트에서 `상장예정일` 라벨 뒤의 `YYYY년 MM월 DD일`을 추출한다
-     (fixture: `tests/fixtures/dart_document_listing.json`, 기대값 `2026-11-25`). 추출 실패 시 해당 건은 다이제스트에서 제외하고 WARN 로그를 남긴다.
+     (fixture: `tests/fixtures/dart_document_listing.json`; 개정 후 기대값 `2026-11-18`). 추출 실패 시 해당 건은 다이제스트에서 제외하고 WARN 로그를 남긴다.
   4. `corpCode.xml`로 `stock_master`를 채운다. 영숫자 종목코드(예: `0158S0`)가 들어올 수 있다고 가정한다
      (fixture: `dart_corpcode_sample.json`). 신규 상장은 늦게 반영될 수 있어 R7 3단계(KRX `ISU_NM` 매칭)로 보완한다.
 - 잠정 결정: 「list.json → document.xml 원문 추출」을 상장예정일 획득 경로로 채택한다. estkRs.json은 보조 정보용이다.
+- **개정 (2026-11-13, 실키 검증 결과)**: 실제 증권신고서·투자설명서 원문에는 `상장예정일`이 없었다(PENDING-1 실패).
+  상장일은 상장 약 1주 전에 접수되는 **증권발행실적보고서**에만 `3. 상장일(매매개시일) YYYY년 MM월 DD일 (예정)` 형태로 확정 기재된다.
+  사용자 승인으로 경로를 바꾼다.
+  1. list.json(C001) 중 `report_nm`에 `증권발행실적보고서`가 든 건만 상장일 출처로 쓴다(회사별 최신 접수번호).
+  2. 원문에서 `상장일(매매개시일)` 라벨 뒤 날짜를 추출한다. 유상증자 실적보고서는 `주권상장 및 유통 예정일`·`신주상장 예정일`을 써서 자연히 제외된다.
+  3. 요약 원문은 같은 회사의 최신 증권신고서·투자설명서(철회·첨부정정 제외)를 `ipo_listings.summary_rcept_no`(마이그레이션 0003)로 연결한다. 없으면 실적보고서를 쓴다.
+  4. 실적보고서가 상장 약 1주 전에 나오므로 `IPO_RANGE_DAYS` 기본값을 14에서 7로 줄인다. 금요일 게시 시점에 실적보고서가 아직 없는 다음 주 후반 상장 종목은 빠질 수 있다.
 - 게이트 1: 경로는 문서상 확정했으나 **실제 응답으로 검증하지 못했다**(PENDING-1). 실키 검증에서 원문에 `상장예정일`이 일관되게 없으면 게이트 1(사용자 승인)로 올린다.
 
 ## 3. KRX 신청 상태
@@ -62,10 +69,11 @@ curl -s -i -H "AUTH_KEY: $KRX_AUTH_KEY" "$KRX_BASE_URL/sto/knx_bydd_trd?basDd=YY
 | `krx_empty.json` | `{"OutBlock_1": []}` |
 | `krx_halted.json` | 정지 행(`ACC_TRDVOL="0"`, `TDD_OPNPRC="0"`) + 정상 행 |
 | `krx_anomaly.json` | vol>0·close>0·`MKTCAP="-"` 행, `MKTCAP` 키 결측 행, 정상 행 |
-| `dart_list_c001.json` | list.json(C001) 2건(원본·정정) |
+| `dart_list_c001.json` | list.json(C001) 3건(증권신고서·증권발행실적보고서·정정 신고서) |
 | `dart_list_empty.json` | status 013(조회 데이터 없음) |
 | `dart_estkrs.json` | estkRs.json 일반사항·증권의종류·인수인정보 그룹 |
-| `dart_document_listing.json` | 원문 텍스트 발췌(상장예정일 포함) |
+| `dart_document_listing.json` | 실제 증권발행실적보고서 발췌(`상장일(매매개시일)` 포함) |
+| `dart_document_rights_offering.json` | 실제 유상증자 실적보고서 발췌(상장일 추출 안 됨) |
 | `dart_corpcode_sample.json` | corpCode 행(영숫자 코드 포함) |
 
 ## 5. 판정 정책 근거

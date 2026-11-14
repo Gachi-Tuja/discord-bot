@@ -22,7 +22,7 @@ def test_defaults(base_env):
     assert s.weekly_post_time == time(18, 0)
     assert s.weekly_post_grace_hours == 6
     assert s.weekly_retry_backoff_minutes == 15
-    assert s.ipo_range_days == 14
+    assert s.ipo_range_days == 7
     assert s.base_lookback_trading_days == 3
     assert s.judge_time == time(9, 0)
     assert s.krx_poll_interval_minutes == 30

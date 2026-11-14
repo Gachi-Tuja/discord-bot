@@ -65,7 +65,7 @@ class SummaryService:
 
     async def summary_for(self, listing: IpoListing) -> str | None:
         """표시할 요약. None이면 `요약 없음`으로 표시한다(실패·재시도 대기)."""
-        rcept_no = listing.source_rcept_no
+        rcept_no = listing.summary_rcept_no or listing.source_rcept_no
         cached = self._repo.get(rcept_no)
         now = self._clock.now()
         if cached is not None:

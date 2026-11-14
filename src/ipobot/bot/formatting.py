@@ -25,8 +25,8 @@ ELLIPSIS = "…"
 # 거부·경고 문구에 그대로 옮기는 사용자 금액 텍스트의 최대 길이(넘으면 잘라 「…」를 붙인다).
 AMOUNT_ECHO_LIMIT = 40
 
-NO_UPCOMING_IPOS = "향후 2주간 상장 예정 종목이 없습니다"
-DIGEST_TITLE = "향후 2주간 상장 예정 종목"
+NO_UPCOMING_IPOS = "향후 1주간 상장 예정 종목이 없습니다"
+DIGEST_TITLE = "향후 1주간 상장 예정 종목"
 NO_SUMMARY = "요약 없음"
 CONFIRM_RESULT_SCHEDULE = "결과는 판정 거래일 다음 영업일 오전, KRX 공개 후 공지됩니다"
 

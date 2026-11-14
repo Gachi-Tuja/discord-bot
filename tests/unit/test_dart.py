@@ -29,7 +29,8 @@ from ipobot.services.ipo_digest import (
 
 BASE = "https://dart.test/api"
 POST = date(2026, 11, 12)
-BIO_RCEPT = "20261020000123"
+BIO_RCEPT = "20261110000123"
+BIO_PROSPECTUS = "20261001000077"
 ROBOT_RCEPT = "20261028000456"
 
 
@@ -65,7 +66,7 @@ async def client():
         yield HttpDartClient("dart-key", base_url=BASE, client=http)
 
 
-# ---------------------------------------------------------------- 상장예정일 추출 (S0a 방식)
+# ---------------------------------------------------------------- 상장일 추출 (증권발행실적보고서)
 
 
 def test_extract_listing_date_from_fixture(load_fixture):
@@ -76,15 +77,22 @@ def test_extract_listing_date_from_fixture(load_fixture):
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("상장 예정일 : 2026. 12. 1.", date(2026, 12, 1)),
-        ("상장예정일 2026-11-30", date(2026, 11, 30)),
+        ("3. 상장일(매매개시일) 2026년 11월 18일 (예정)", date(2026, 11, 18)),
+        ("상장일 ( 매매개시일 ) : 2026. 12. 1.", date(2026, 12, 1)),
+        ("상장일(매매개시일) 2026-11-30", date(2026, 11, 30)),
         ("청약기일: 2026년 11월 16일 납입기일: 2026년 11월 19일", None),
-        ("상장예정일: 2026년 2월 30일", None),
+        ("상장예정일: 2026년 11월 25일", None),
+        ("신주상장일(매매개시일) 2026년 11월 20일", None),
+        ("상장일(매매개시일): 2026년 2월 30일", None),
         ("", None),
     ],
 )
 def test_extract_listing_date_variants(text, expected):
     assert extract_listing_date(text) == expected
+
+
+def test_extract_listing_date_ignores_rights_offering_report(load_fixture):
+    assert extract_listing_date(load_fixture("dart_document_rights_offering.json")["text_excerpt"]) is None
 
 
 def test_document_zip_text_strips_tags_and_entities():
@@ -110,9 +118,14 @@ async def test_list_filings_request_and_parse(client, load_fixture):
         "page_no": "1",
         "page_count": "100",
     }
-    assert [f.rcept_no for f in filings] == [BIO_RCEPT, ROBOT_RCEPT]
-    bio = filings[0]
-    assert (bio.corp_code, bio.corp_name, bio.rcept_dt) == ("01987654", "가치토자바이오", date(2026, 10, 20))
+    assert [f.rcept_no for f in filings] == [BIO_PROSPECTUS, BIO_RCEPT, ROBOT_RCEPT]
+    bio = filings[1]
+    assert (bio.corp_code, bio.corp_name, bio.report_nm, bio.rcept_dt) == (
+        "01987654",
+        "가치토자바이오",
+        "증권발행실적보고서",
+        date(2026, 11, 10),
+    )
     assert bio.market is None and bio.stock_code is None  # corp_cls E, 종목코드 미부여
 
 
@@ -120,7 +133,7 @@ async def test_list_filings_request_and_parse(client, load_fixture):
 async def test_list_filings_paginates(client, load_fixture):
     page = load_fixture("dart_list_c001.json")
     p1 = {**page, "total_page": 2, "list": page["list"][:1]}
-    p2 = {**page, "page_no": 2, "total_page": 2, "list": [{**page["list"][1], "corp_cls": "K", "stock_code": "0158S0"}]}
+    p2 = {**page, "page_no": 2, "total_page": 2, "list": [{**page["list"][2], "corp_cls": "K", "stock_code": "0158S0"}]}
     route = respx.get(f"{BASE}/list.json").mock(
         side_effect=[httpx.Response(200, json=p1), httpx.Response(200, json=p2)]
     )
@@ -170,7 +183,7 @@ async def test_document_text_from_zip(client, load_fixture):
     )
     text = await client.document_text(BIO_RCEPT)
     assert route.calls.last.request.url.params["rcept_no"] == BIO_RCEPT
-    assert extract_listing_date(text) == date(2026, 11, 25)
+    assert extract_listing_date(text) == date.fromisoformat(fx["expected_listing_date"])
 
 
 @respx.mock
@@ -246,12 +259,16 @@ async def test_corp_codes_error_status_raises(client):
 # ---------------------------------------------------------------- 수집 서비스 (fake 포트)
 
 
-def filing(rcept_no: str, corp_code: str, corp_name: str, **kw) -> DartFiling:
+RESULT_REPORT = "증권발행실적보고서"
+PROSPECTUS = "증권신고서(지분증권)"
+
+
+def filing(rcept_no: str, corp_code: str, corp_name: str, report_nm: str = RESULT_REPORT, **kw) -> DartFiling:
     return DartFiling(
         rcept_no=rcept_no,
         corp_code=corp_code,
         corp_name=corp_name,
-        report_nm="증권신고서(지분증권)",
+        report_nm=report_nm,
         rcept_dt=date(2026, 10, 20),
         **kw,
     )
@@ -287,7 +304,7 @@ class FakeDart:
 
 def doc(day: str) -> str:
     y, m, d = day.split("-")
-    return f"공모 일정 ... 상장예정일: {int(y)}년 {int(m)}월 {int(d)}일"
+    return f"증권발행실적보고서 ... 3. 상장일(매매개시일) {int(y)}년 {int(m)}월 {int(d)}일 (예정)"
 
 
 async def test_build_digest_range_and_order(conn, fake_clock):
@@ -309,7 +326,7 @@ async def test_build_digest_range_and_order(conn, fake_clock):
             "20261001000004": doc("2026-11-12"),
             "20261001000005": doc("2026-11-27"),
             "20261001000006": doc("2026-11-26"),
-            "20261001000007": "상장예정일 미정",
+            "20261001000007": "주권상장 및 유통 예정일: 2026년 11월 20일",
             "20261001000008": None,
         },
     )
@@ -394,13 +411,33 @@ async def test_build_digest_end_to_end_fixture(conn, fake_clock, client, load_fi
     respx.get(f"{BASE}/document.xml", params={"rcept_no": BIO_RCEPT}).mock(
         return_value=httpx.Response(200, content=document_zip(fx["text_excerpt"]))
     )
-    respx.get(f"{BASE}/document.xml", params={"rcept_no": ROBOT_RCEPT}).mock(
-        return_value=httpx.Response(200, json={"status": "013", "message": "조회된 데이타가 없습니다."})
+    listings = await IpoDigestService(client, conn, fake_clock, range_days=7).build_digest(POST)
+    assert [(it.corp_name, it.listing_date, it.market, it.source_rcept_no, it.summary_rcept_no) for it in listings] == [
+        ("가치토자바이오", date(2026, 11, 18), None, BIO_RCEPT, BIO_PROSPECTUS)
+    ]  # 실적보고서가 없는 샘플로보틱스는 원문을 받지 않고 빠진다
+
+
+async def test_build_digest_only_reads_result_reports_and_links_summary_source(conn, fake_clock):
+    client = FakeDart(
+        filings=[
+            filing("20261001000001", "C1", "공모회사", PROSPECTUS),
+            filing("20261020000002", "C1", "공모회사", "[기재정정]증권신고서(지분증권)"),
+            filing("20261021000003", "C1", "공모회사", "투자설명서"),
+            filing("20261022000004", "C1", "공모회사", "[첨부정정]투자설명서"),
+            filing("20261110000005", "C1", "공모회사"),
+            filing("20261001000006", "C2", "신고서만", PROSPECTUS),
+            filing("20261111000007", "C3", "실적만"),
+            filing("20261112000008", "C4", "철회회사", "철회신고서"),
+        ],
+        documents={"20261110000005": doc("2026-11-18"), "20261111000007": doc("2026-11-19")},
     )
-    listings = await IpoDigestService(client, conn, fake_clock, range_days=14).build_digest(POST)
-    assert [(it.corp_name, it.listing_date, it.market) for it in listings] == [
-        ("가치토자바이오", date(2026, 11, 25), None)
+    listings = await IpoDigestService(client, conn, fake_clock, range_days=7).build_digest(POST)
+    assert [(it.corp_name, it.source_rcept_no, it.summary_rcept_no) for it in listings] == [
+        ("공모회사", "20261110000005", "20261021000003"),
+        ("실적만", "20261111000007", None),
     ]
+    assert sorted(client.document_calls) == ["20261110000005", "20261111000007"]
+    assert IpoListingRepo(conn).by_rcept_no("20261110000005").summary_rcept_no == "20261021000003"
 
 
 def test_latest_filings_picks_max_rcept_no():
@@ -471,7 +508,7 @@ async def test_preview_digest_prints_parts(conn, fake_clock):
 async def test_preview_digest_empty_success(conn, fake_clock):
     out = io.StringIO()
     assert await preview_digest(FakeDart(), conn, fake_clock, 14, POST, out) == 0
-    assert "향후 2주간 상장 예정 종목이 없습니다" in out.getvalue()
+    assert "향후 1주간 상장 예정 종목이 없습니다" in out.getvalue()
 
 
 async def test_preview_digest_dart_failure_never_prints_empty_notice(conn, fake_clock):

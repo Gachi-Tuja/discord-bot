@@ -84,7 +84,7 @@ class StockMasterEntry:
 
 @dataclass(frozen=True)
 class IpoListing:
-    """상장 예정 종목(ipo_listings 한 행). 상장일은 DART 원문에서 추출한다."""
+    """상장 예정 종목(ipo_listings 한 행). 상장일은 증권발행실적보고서 원문(`source_rcept_no`)에서 추출한다."""
 
     corp_code: str
     corp_name: str
@@ -92,6 +92,7 @@ class IpoListing:
     source_rcept_no: str
     stock_code: str | None = None
     market: Market | None = None
+    summary_rcept_no: str | None = None  # 요약 원문(증권신고서·투자설명서). None이면 source_rcept_no
 
 
 @dataclass(frozen=True)

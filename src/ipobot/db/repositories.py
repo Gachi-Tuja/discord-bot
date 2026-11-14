@@ -595,12 +595,22 @@ class IpoListingRepo:
                 )
                 c.execute(
                     "INSERT INTO ipo_listings (corp_code, corp_name, stock_code, market, listing_date, "
-                    "source_rcept_no, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "source_rcept_no, summary_rcept_no, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT (corp_code, listing_date) DO UPDATE SET corp_name = excluded.corp_name, "
                     "stock_code = COALESCE(excluded.stock_code, ipo_listings.stock_code), "
                     "market = COALESCE(excluded.market, ipo_listings.market), "
-                    "source_rcept_no = excluded.source_rcept_no, collected_at = excluded.collected_at",
-                    (it.corp_code, it.corp_name, it.stock_code, it.market, day, it.source_rcept_no, stamp),
+                    "source_rcept_no = excluded.source_rcept_no, summary_rcept_no = excluded.summary_rcept_no, "
+                    "collected_at = excluded.collected_at",
+                    (
+                        it.corp_code,
+                        it.corp_name,
+                        it.stock_code,
+                        it.market,
+                        day,
+                        it.source_rcept_no,
+                        it.summary_rcept_no,
+                        stamp,
+                    ),
                 )
 
     @staticmethod
@@ -612,6 +622,7 @@ class IpoListingRepo:
             source_rcept_no=row["source_rcept_no"],
             stock_code=row["stock_code"],
             market=row["market"],
+            summary_rcept_no=row["summary_rcept_no"],
         )
 
 

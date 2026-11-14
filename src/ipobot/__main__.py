@@ -141,7 +141,7 @@ def _dart_env() -> tuple[str, str, int]:
     if not key:
         raise ConfigError("필수 환경변수 DART_API_KEY가 없습니다")
     db_path = _optional(os.environ, "DB_PATH", "./data/ipobot.sqlite3")
-    range_days = _int("IPO_RANGE_DAYS", _optional(os.environ, "IPO_RANGE_DAYS", "14"), minimum=1)
+    range_days = _int("IPO_RANGE_DAYS", _optional(os.environ, "IPO_RANGE_DAYS", "7"), minimum=1)
     return key, db_path, range_days
 
 

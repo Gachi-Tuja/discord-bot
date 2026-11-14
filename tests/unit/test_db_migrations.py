@@ -23,9 +23,9 @@ TABLES = {
 def test_migrate_sets_version_and_is_idempotent(tmp_path):
     conn = connect(tmp_path / "db" / "t.sqlite3")
     assert user_version(conn) == 0
-    assert migrate(conn) == 2
-    assert user_version(conn) == 2
-    assert migrate(conn) == 2  # 두 번째 실행은 아무것도 하지 않는다
+    assert migrate(conn) == 3
+    assert user_version(conn) == 3
+    assert migrate(conn) == 3  # 두 번째 실행은 아무것도 하지 않는다
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert TABLES <= names
 
@@ -34,7 +34,7 @@ def test_reopen_existing_database(tmp_path):
     path = tmp_path / "t.sqlite3"
     open_database(path).close()
     conn = open_database(path)
-    assert user_version(conn) == 2
+    assert user_version(conn) == 3
 
 
 def test_pragmas(tmp_path):
@@ -93,6 +93,6 @@ def test_0002_backfills_auth_delay_due_at_from_v1_database(tmp_path):
         "('0158S0','KOSDAQ','2026-11-10',1,'2026-12-10','2026-12-10','pending','x','t1','krx_auth'),"
         "('0158S1','KOSDAQ','2026-11-10',1,'2026-12-10','2026-12-10','pending','x','t1','krx_fetch')"
     )
-    assert migrate(conn) == 2
+    assert migrate(conn) == 3
     rows = conn.execute("SELECT stock_code, auth_delay_due_at FROM judgments ORDER BY stock_code").fetchall()
     assert [(r[0], r[1]) for r in rows] == [("0158S0", "t1"), ("0158S1", None)]

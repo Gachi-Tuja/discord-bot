@@ -1,7 +1,7 @@
 {
-  "_provisional": true,
-  "_note": "SYNTHETIC provisional fixture (S0a). Shape follows OpenDART developer guide; replace with real response when DART real-key verification is done (PENDING). document.xml is a zip of XML; this holds the extracted plain text excerpt used by the listing-date extractor.",
-  "rcept_no": "20261020000123",
-  "text_excerpt": "【 일정 】 청약기일: 2026년 11월 16일 ~ 2026년 11월 17일 납입기일: 2026년 11월 19일 ... 상장예정일: 2026년 11월 25일 (주1) 상기 일정은 관계기관과의 협의에 따라 변경될 수 있습니다.",
-  "expected_listing_date": "2026-11-25"
+  "_provisional": false,
+  "_note": "Excerpt of a real 증권발행실적보고서 (DART rcept_no 20261111000281, KOSDAQ IPO), re-keyed to the synthetic company used by dart_list_c001.json. Listing date appears only under 상장일(매매개시일).",
+  "rcept_no": "20261110000123",
+  "text_excerpt": "증권발행실적보고서 ... 1. 청약 및 배정에 관한 사항 ... 2. 납입일 2026년 11월 13일 3. 상장일(매매개시일) 2026년 11월 18일 (예정) 4. 증권의 교부일 ...",
+  "expected_listing_date": "2026-11-18"
 }

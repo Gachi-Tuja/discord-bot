@@ -104,7 +104,7 @@ class Krx:
 
 
 class Dart:
-    """증권신고서 목록·원문. `list_errors`는 list_filings 호출마다 앞에서부터 소비한다."""
+    """증권발행실적보고서 목록·원문. `list_errors`는 list_filings 호출마다 앞에서부터 소비한다."""
 
     def __init__(self) -> None:
         self.filings: list[DartFiling] = []
@@ -117,7 +117,7 @@ class Dart:
             rcept = f"20261201{len(self.filings) + 1:06d}"
             self.filings.append(
                 DartFiling(rcept, f"{len(self.filings) + 1:08d}", f"상장사{len(self.filings) + 1:02d}",
-                           "증권신고서(지분증권)", date(2026, 12, 1), market="KOSDAQ")
+                           "증권발행실적보고서", date(2026, 12, 1), market="KOSDAQ")
             )
             self.listing_dates[rcept] = listing_date
 
@@ -129,7 +129,7 @@ class Dart:
 
     async def document_text(self, rcept_no: str) -> str:
         d = self.listing_dates[rcept_no]
-        return f"증권신고서\n상장예정일: {d.year}년 {d.month}월 {d.day}일\n회사는 반도체 장비를 만든다."
+        return f"증권발행실적보고서\n3. 상장일(매매개시일) {d.year}년 {d.month}월 {d.day}일 (예정)\n회사는 반도체 장비를 만든다."
 
     async def corp_codes(self):
         return []
