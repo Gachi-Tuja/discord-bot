@@ -1,7 +1,8 @@
 """디스코드 채널 fake(S3c, Gate3 F5).
 
 `create_autospec(discord.TextChannel, instance=True)` 위에 `send`만 바꿔 끼운다. 그래서 실제 시그니처에 없는
-인자(예: `enforce_nonce`)는 TypeError로 거부된다. discord.py는 nonce를 붙이면 `enforce_nonce: true`를 보내고,
+인자(예: `enforce_nonce`)는 TypeError로 거부된다. `history`는 게시된 메시지를 최신순으로 돌려주고
+`history_script`로 예외를 넣을 수 있다. 봇 자신은 `guild.me.id == BOT_USER_ID`다. discord.py는 nonce를 붙이면 `enforce_nonce: true`를 보내고,
 디스코드는 같은 nonce를 몇 분 동안만 중복 제거한다. fake는 주입 시계 기준 `dedupe_window`(기본 5분) 안의 같은
 nonce에 기존 메시지를 돌려주고, 창이 지나면 새 메시지를 게시한다.
 """
@@ -16,6 +17,8 @@ from unittest.mock import create_autospec
 import discord
 
 DEFAULT_DEDUPE_WINDOW = timedelta(minutes=5)
+BOT_USER_ID = 42
+OTHER_USER_ID = 7
 
 
 class _Clock(Protocol):
@@ -70,15 +73,49 @@ class FakeDiscord:
         self.calls: list[tuple[str | None, dict[str, Any]]] = []
         self.by_nonce: dict[str, tuple[datetime, SimpleNamespace]] = {}
         self.posted: list[SimpleNamespace] = []
+        self.history_script: list[BaseException | None] = []
+        self.history_calls: list[dict[str, Any]] = []
 
     def channel(self) -> Any:
         ch = create_autospec(discord.TextChannel, instance=True)
         ch.send.side_effect = self.send
+        ch.history.side_effect = self.history
+        ch.guild = SimpleNamespace(me=SimpleNamespace(id=BOT_USER_ID))
         return ch
+
+    def _message(self, nonce: str | None, author_id: int, **kwargs: Any) -> SimpleNamespace:
+        kwargs.setdefault("content", None)
+        kwargs.setdefault("embeds", [])
+        return SimpleNamespace(
+            id=1000 + len(self.posted), nonce=nonce, author=SimpleNamespace(id=author_id),
+            created_at=self.clock.now(), **kwargs,
+        )
+
+    def post_other(self, content: str, author_id: int = OTHER_USER_ID) -> SimpleNamespace:
+        """다른 사용자(또는 nonce 없는 메시지)가 채널에 쓴 글을 심는다."""
+        msg = self._message(None, author_id, content=content)
+        self.posted.append(msg)
+        return msg
+
+    def history(self, *, limit: int | None = 100, after: Any = None, oldest_first: bool | None = None, **kw: Any) -> Any:
+        self.history_calls.append({"limit": limit, "after": after, "oldest_first": oldest_first, **kw})
+        step = self.history_script.pop(0) if self.history_script else None
+        msgs = [m for m in self.posted if after is None or m.created_at > after]
+        msgs = msgs if oldest_first else list(reversed(msgs))
+        msgs = msgs[:limit] if limit is not None else msgs
+
+        async def gen() -> Any:
+            if isinstance(step, BaseException):
+                raise step
+            for m in msgs:
+                yield m
+
+        return gen()
 
     def preposted(self, nonce: str, message_id: int) -> SimpleNamespace:
         """이미 게시된(응답만 유실된) 메시지를 심는다."""
-        msg = SimpleNamespace(id=message_id, nonce=nonce)
+        msg = self._message(nonce, BOT_USER_ID)
+        msg.id = message_id
         self.by_nonce[nonce] = (self.clock.now(), msg)
         self.posted.append(msg)
         return msg
@@ -101,7 +138,7 @@ class FakeDiscord:
             first_seen, msg = self.by_nonce[nonce]
             if now - first_seen < self.dedupe_window:
                 return msg
-        msg = SimpleNamespace(id=1000 + len(self.posted), nonce=nonce, **kwargs)
+        msg = self._message(nonce, BOT_USER_ID, **kwargs)
         if nonce is not None:
             self.by_nonce[nonce] = (now, msg)
         self.posted.append(msg)

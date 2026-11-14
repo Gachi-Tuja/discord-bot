@@ -11,7 +11,8 @@ import aiohttp
 import discord
 import pytest
 
-from ipobot.services.delivery import Delivered, Failed, deliver_parts, part_nonce
+from ipobot.bot.formatting import Part
+from ipobot.services.delivery import Delivered, Failed, ProgressRecordError, deliver_parts, part_nonce
 from tests.fakes.discord_channel import FakeDiscord, Resp, forbidden, not_found, server_error
 
 
@@ -273,3 +274,106 @@ async def test_on_sent_exception_propagates_and_rerun_same_start_does_not_duplic
     assert rec.sent == [(1, "1001"), (2, "1002")]
     assert len(fake.posted) == 3
     assert [m.nonce for m in fake.posted] == ["j7:0", "j7:1", "j7:2"]
+
+
+# ------------------------------------------------- 채널 기록 중복 확인(nonce 창 밖 재전송)
+
+
+async def test_on_sent_exception_is_wrapped_as_progress_record_error():
+    fake = FakeDiscord()
+
+    def on_sent(i, mid):
+        raise RuntimeError("db locked")
+
+    with pytest.raises(ProgressRecordError) as info:
+        await deliver_parts(fake.channel(), PARTS, "j7", on_sent=on_sent)
+    assert info.value.index == 0
+    assert isinstance(info.value.__cause__, RuntimeError)
+
+
+async def test_dedupe_after_window_records_existing_post_without_resending(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    since = fake_clock.now()
+    fake_clock.set(since + timedelta(seconds=1))
+    await deliver(fake, [P("a")])  # 게시됐지만 진행 기록을 잃었다고 가정
+    fake_clock.set(fake_clock.now() + timedelta(minutes=30))  # nonce 창 밖
+    result, rec, _ = await deliver(fake, PARTS, dedupe_after=since)
+    assert result == Delivered(sent=3)
+    assert rec.sent == [(0, "1000"), (1, "1001"), (2, "1002")]
+    assert fake.nonces == ["j7:0", "j7:1", "j7:2"]  # 0번은 다시 보내지 않았다
+    assert [m.content for m in fake.posted] == ["a", "b", "c"]
+    assert fake.history_calls[0]["after"] == since
+    assert fake.history_calls[0]["oldest_first"] is False
+
+
+async def test_dedupe_checks_only_start_part(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    since = fake_clock.now()
+    fake_clock.set(since + timedelta(seconds=1))
+    await deliver(fake, [P("a")])
+    fake_clock.set(fake_clock.now() + timedelta(minutes=30))
+    result, rec, _ = await deliver(fake, PARTS, start=1, dedupe_after=since)
+    assert result == Delivered(sent=2)
+    assert rec.sent == [(1, "1001"), (2, "1002")]
+    assert len(fake.history_calls) == 1
+
+
+async def test_dedupe_ignores_other_authors_and_older_messages(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    fake.preposted("old", 900).content = "a"  # since 이전의 봇 메시지
+    fake_clock.set(fake_clock.now() + timedelta(seconds=1))
+    since = fake_clock.now()
+    fake_clock.set(since + timedelta(seconds=1))
+    fake.post_other("a")  # 다른 사용자가 같은 내용을 씀
+    result, rec, _ = await deliver(fake, [P("a")], dedupe_after=since)
+    assert result == Delivered(sent=1)
+    assert fake.nonces == ["j7:0"]
+    assert rec.sent == [(0, str(fake.posted[-1].id))]
+
+
+async def test_dedupe_matches_embed_parts(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    since = fake_clock.now()
+    fake_clock.set(since + timedelta(seconds=1))
+    part = Part(embeds=({"title": "📊 결과", "description": "본문", "fields": [{"name": "1위", "value": "x"}]},))
+    await deliver(fake, [part])
+    fake_clock.set(fake_clock.now() + timedelta(minutes=30))
+    other = Part(embeds=({"title": "📊 결과", "description": "본문", "fields": [{"name": "1위", "value": "y"}]},))
+    result, rec, _ = await deliver(fake, [part, other], dedupe_after=since)
+    assert result == Delivered(sent=2)
+    assert len(fake.calls) == 2  # 0번 1회(첫 게시) + 1번 1회
+    assert rec.sent[0] == (0, "1000")
+
+
+async def test_dedupe_history_forbidden_alerts_and_still_sends(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    fake.history_script = [forbidden()]
+    result, rec, _ = await deliver(fake, [P("a")], dedupe_after=fake_clock.now())
+    assert result == Delivered(sent=1)
+    assert [k for k, _ in rec.alerts] == ["discord_history_forbidden"]
+    assert fake.nonces == ["j7:0"]
+
+
+async def test_dedupe_history_error_with_require_dedupe_does_not_send(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    fake.history_script = [server_error()]
+    result, rec, _ = await deliver(fake, [P("a")], dedupe_after=fake_clock.now(), require_dedupe=True)
+    assert result == Failed("history_unavailable", index=0)
+    assert fake.calls == []
+    assert rec.sent == []
+
+
+async def test_dedupe_found_but_record_fails_raises_without_sending(fake_clock):
+    fake = FakeDiscord(clock=fake_clock)
+    since = fake_clock.now()
+    fake_clock.set(since + timedelta(seconds=1))
+    await deliver(fake, [P("a")])
+    fake_clock.set(fake_clock.now() + timedelta(minutes=30))
+
+    def on_sent(i, mid):
+        raise RuntimeError("db locked")
+
+    with pytest.raises(ProgressRecordError):
+        await deliver_parts(fake.channel(), [P("a")], "j7", on_sent=on_sent, dedupe_after=since)
+    assert len(fake.calls) == 1
+    assert len(fake.posted) == 1
