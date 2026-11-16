@@ -1,0 +1,10 @@
+[Unit]
+Description=ipobot: deploy the latest GitHub release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/ipobot/deploy/update.sh
+SyslogIdentifier=ipobot-update

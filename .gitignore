@@ -10,3 +10,4 @@ build/
 data/
 *.sqlite3
 *.sqlite3-*
+.update.lock
