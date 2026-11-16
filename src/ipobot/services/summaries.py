@@ -29,6 +29,8 @@ log = logging.getLogger(__name__)
 SUMMARY_MAX_CHARS = 200
 SUMMARY_INPUT_MAX_CHARS = 30_000
 _SPACE_RE = re.compile(r"\s+")
+# 투자설명서 본문의 사업 섹션 제목. 앞쪽 등장은 목차·참조라 마지막 등장을 본문으로 본다.
+_BUSINESS_SECTION_RE = re.compile(r"(?:II|Ⅱ)\s*\.\s*사업의\s*내용")
 
 
 class LlmError(Exception):
@@ -49,6 +51,16 @@ def normalize_summary(raw: str) -> str:
     if len(text) > SUMMARY_MAX_CHARS:
         text = text[: SUMMARY_MAX_CHARS - 1].rstrip() + "…"
     return text
+
+
+def summary_input(document_text: str) -> str:
+    """LLM에 넣을 원문 구간. 앞부분은 정정표·공모조건뿐이라 `II. 사업의 내용`부터 자른다.
+
+    제목이 없으면(실적보고서 등) 앞에서부터 자른다.
+    """
+    matches = list(_BUSINESS_SECTION_RE.finditer(document_text))
+    start = matches[-1].start() if matches else 0
+    return document_text[start : start + SUMMARY_INPUT_MAX_CHARS]
 
 
 class SummaryService:
@@ -78,7 +90,7 @@ class SummaryService:
             text = await self._documents.document_text(rcept_no)
             if not text or not text.strip():
                 raise LlmError("DART 원문이 없습니다")
-            raw = await self._llm.summarize(listing.corp_name, text[:SUMMARY_INPUT_MAX_CHARS])
+            raw = await self._llm.summarize(listing.corp_name, summary_input(text))
         except (DartUnavailable, LlmError) as exc:
             log.warning("summary_failed rcept_no=%s corp=%s error=%s", rcept_no, listing.corp_name, exc)
             self._repo.save_failed(rcept_no, listing.corp_code, now + self._retry, now)

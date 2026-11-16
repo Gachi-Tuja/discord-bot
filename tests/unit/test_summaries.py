@@ -140,6 +140,16 @@ async def test_document_text_is_truncated_for_llm(conn, fake_clock):
     assert llm.calls == [("가치토자바이오", "나" * SUMMARY_INPUT_MAX_CHARS)]
 
 
+@pytest.mark.parametrize("heading", ["II. 사업의 내용", "Ⅱ. 사업의 내용", "II.사업의  내용"])
+async def test_llm_input_starts_at_last_business_section(conn, fake_clock, heading):
+    # 투자설명서 앞부분은 정정표·공모조건이고, 앞쪽의 같은 제목은 목차·참조다. 본문 섹션(마지막)부터 넣는다.
+    body = f"{heading} 당사는 로봇용 힘센서를 만듭니다." + "다" * SUMMARY_INPUT_MAX_CHARS
+    text = "정정표" * 20_000 + f"목차 {heading} 3쪽 " + "공모" * 5_000 + body
+    llm = FakeLlm("로봇용 힘센서 제조.")
+    await service(llm, FakeDocs(text), conn, fake_clock).summary_for(LISTING)
+    assert llm.calls == [("가치토자바이오", body[:SUMMARY_INPUT_MAX_CHARS])]
+
+
 async def test_summaries_for_maps_rcept_numbers(conn, fake_clock):
     other = IpoListing("C2", "샘플로보틱스", date(2026, 11, 20), "20261028000456")
     llm = FakeLlm("바이오 요약", LlmError("down"))
