@@ -103,6 +103,36 @@ set -a; . ./.env; set +a
 
 ## 5. 운영
 
+### 릴리스와 자동 배포
+
+서버는 GitHub의 **최신 릴리스**를 따라간다. `main`에 푸시만 해서는 배포되지 않는다.
+
+릴리스 절차:
+
+1. `pyproject.toml`의 `version`을 올리고 `uv lock`을 실행해 커밋한다.
+2. `main`을 푸시한 뒤 같은 버전으로 릴리스를 만든다: `gh release create v0.2.0 --target main --generate-notes`.
+3. 5분 안에 서버가 배포한다. 확인: `journalctl -u ipobot-update -n 50`.
+
+서버의 `ipobot-update.timer`가 5분마다 `deploy/update.sh`를 실행한다. 스크립트는 다음 순서로 동작한다.
+
+1. 최신 릴리스 태그가 지금 체크아웃된 태그와 같으면 아무것도 하지 않는다.
+2. 다르면 태그를 체크아웃하고 `uv sync --frozen` 후 테스트를 돌린다.
+3. 봇을 재시작하고 10초 뒤 active인지 확인한다.
+
+테스트가 실패하거나 재시작 후 active가 아니면 이전 커밋으로 되돌리고 다시 재시작한다. 그 릴리스는 5분마다 다시 시도되므로, 고친 릴리스를 새로 내야 멈춘다.
+
+서버에서 추적 파일을 직접 고치면 자동 배포가 멈추고 로그에 수정된 파일이 남는다. `.env`와 `data/`는 추적하지 않으므로 영향이 없다.
+
+설치(최초 1회, 서버에서):
+
+```sh
+sudo cp deploy/ipobot-update.service deploy/ipobot-update.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ipobot-update.timer
+```
+
+스크립트는 `ubuntu` 계정으로 돌며 재시작에 암호 없는 `sudo`가 필요하다. 저장소가 공개라 GitHub 인증은 필요 없다.
+
 ### 로그
 
 - 형식: `시각 레벨 로거 메시지`. 표준 출력으로 나가며 `LOG_LEVEL`로 조절한다.
