@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, time
@@ -59,6 +60,9 @@ from ipobot.services.alerts import operator_alert
 from ipobot.services.prediction_parser import ParseRejection, PredictionParser
 
 log = logging.getLogger(__name__)
+
+# `동원파츠(A0162D0)`처럼 이름 뒤 괄호에 코드를 함께 쓴 입력.
+_BRACKETED_CODE_RE = re.compile(r"^.*?[(\[]\s*([^()\[\]]+?)\s*[)\]]$")
 
 
 class QuotePort(Protocol):
@@ -208,12 +212,16 @@ class PredictionService:
         return await self._base_quote(code, candidates, bypass)
 
     async def _resolve(self, query: str, candidates: list[date], bypass: bool) -> str | Rejected:
-        """R7: 코드 패턴 → stock_master 이름 → lookback 안 최신 공개일 KRX 스냅샷 이름."""
+        """R7: 코드 패턴(전체 또는 `이름(코드)` 괄호 안) → stock_master 이름 → lookback 안 최신 공개일 KRX 스냅샷 이름."""
         text = query.strip()
-        try:
-            return normalize_code(text)
-        except ValueError:
-            pass
+        bracketed = _BRACKETED_CODE_RE.match(text)
+        for candidate in (text, bracketed.group(1) if bracketed else None):
+            if candidate is None:
+                continue
+            try:
+                return normalize_code(candidate)
+            except ValueError:
+                pass
         codes = self._master.codes_for_name(text)
         if len(codes) == 1:
             return codes[0]

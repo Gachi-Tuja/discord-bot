@@ -212,6 +212,14 @@ async def test_new_listing_missing_from_corpcode_resolves_via_krx_isu_nm(env):
     assert isinstance(d, Draft) and d.stock_code == CODE and d.base.corp_name == "신규상장"
 
 
+@pytest.mark.parametrize("query", [f"앨리스(A{CODE})", f"앨리스 ({CODE})", f"앨리스 [A{CODE}]"])
+async def test_name_with_code_in_parentheses_resolves_by_code(env, query):
+    service, krx, _, _ = env
+    krx.publish(FRI, q(d=FRI))
+    d = await service.draft("u1", "n", query)
+    assert isinstance(d, Draft) and d.stock_code == CODE
+
+
 async def test_name_lookup_uses_latest_published_snapshot(env, conn):
     service, krx, clock, _ = env
     krx.publish(THU, q(d=THU, name="신규상장"))
