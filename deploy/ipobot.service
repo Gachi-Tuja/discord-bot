@@ -1,0 +1,19 @@
+[Unit]
+Description=ipobot Discord Bot (IPO digest and price predictions)
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ipobot
+EnvironmentFile=/home/ubuntu/ipobot/.env
+ExecStart=/home/ubuntu/ipobot/.venv/bin/python -m ipobot run
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ipobot
+
+[Install]
+WantedBy=multi-user.target
