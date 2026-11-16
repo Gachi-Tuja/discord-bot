@@ -2,13 +2,18 @@
 
 이 봇은 세 가지 일을 한다.
 
-- 매주 정해진 시각에 향후 1주간의 상장 예정 종목을 요약해 게시한다. 상장일은 DART 증권발행실적보고서의 `상장일(매매개시일)`에서, 요약은 같은 회사의 증권신고서·투자설명서에서 얻는다. 실적보고서는 보통 상장 약 1주 전에 접수되므로 다음 주 후반 상장 종목은 금요일 게시에서 빠질 수 있다.
+- 매주 정해진 시각에 향후 1주간의 상장 예정 종목을 요약해 게시한다.
+  - 상장일은 DART 증권발행실적보고서의 `상장일(매매개시일)`에서 얻는다. 실적보고서는 보통 상장 약 1주 전에 접수되므로 다음 주 후반 상장 종목은 금요일 게시에서 빠질 수 있다.
+  - 회사 한 줄 요약은 같은 회사의 투자설명서·증권신고서 본문 `II. 사업의 내용`부터 3만 자를 LLM에 넣어 만든다. 근거가 부족하면 「요약 없음」이 나온다.
 - `/predict`로 상장 종목의 1·3·6·12개월 뒤 주가·시가총액 예측을 받는다.
 - 목표일이 지나면 KRX 일별매매정보 종가로 판정해 결과를 공지한다.
 
-> **현재 상태: 테스트 fixture는 잠정(합성) 데이터다.**
-> `tests/fixtures/*.json`에는 모두 `"_provisional": true`가 붙어 있다. 실제 KRX 키로 응답을 기록하는 S0b(CP-KRX)를 아직 실행하지 못했기 때문이다.
-> 아래 「S0b: 실제 KRX fixture 교체 절차」를 마치기 전에는 수동 스모크와 릴리스를 진행하지 않는다.
+> **현재 상태**
+> - `susc-crow`에서 운영 중이다. GitHub 최신 릴리스가 자동 배포된다(5절).
+> - KRX 3개 서비스는 승인됐다. 2026-11-13자 3시장 조회를 확인했다.
+> - 테스트 fixture(`tests/fixtures/*.json`)는 아직 합성본이다(`"_provisional": true`). 실제 응답으로 교체하는 S0b(6절)가 남아 있다.
+
+목차: [설치](#1-설치) · [환경변수](#2-환경변수) · [KRX 신청](#3-krx-서비스-신청-절차) · [명령](#4-명령) · [운영](#5-운영) · [S0b](#6-s0b-실제-krx-fixture-교체-절차) · [스모크](#7-수동-디스코드-스모크-체크리스트) · [개발](#8-개발)
 
 ## 1. 설치
 
@@ -75,8 +80,10 @@ set -a; . ./.env; set +a
 
 ## 3. KRX 서비스 신청 절차
 
-1. KRX 정보데이터시스템 Open API(`data-dbg.krx.co.kr`)에 가입하고 인증키를 발급받는다.
-2. 다음 3개 서비스를 각각 이용 신청한다.
+운영 키는 3개 서비스 모두 승인된 상태다. 키를 새로 발급할 때만 이 절차를 따른다.
+
+1. [KRX Open API](https://openapi.krx.co.kr)에 가입하고 인증키를 발급받는다. API 호출 주소는 `KRX_BASE_URL`(`data-dbg.krx.co.kr`)이다.
+2. [주식 서비스 목록](https://openapi.krx.co.kr/contents/OPP/USES/service/OPPUSES002_S1.cmd)에서 다음 3개 서비스를 각각 이용 신청한다. 신청 현황은 [마이페이지](https://openapi.krx.co.kr/contents/OPP/MYPG/mypage/OPPMYPG001.cmd)에서 본다.
    - 유가증권 일별매매정보(`sto/stk_bydd_trd`)
    - 코스닥 일별매매정보(`sto/ksq_bydd_trd`)
    - 코넥스 일별매매정보(`sto/knx_bydd_trd`)
@@ -103,6 +110,44 @@ set -a; . ./.env; set +a
 
 ## 5. 운영
 
+### 운영 서버
+
+| 항목 | 값 |
+|---|---|
+| 호스트 | `susc-crow`(`ssh crow`), 계정 `ubuntu` |
+| 코드 | `~/ipobot`. 최신 릴리스 태그가 체크아웃돼 있다 |
+| 환경변수 | `~/ipobot/.env`. systemd가 `EnvironmentFile`로 읽는다 |
+| DB | `.env`의 `DB_PATH` |
+| 봇 | `ipobot.service`(`deploy/ipobot.service`) |
+| 자동 배포 | `ipobot-update.timer` → `ipobot-update.service`(`deploy/`) |
+
+```sh
+systemctl status ipobot                  # 상태
+journalctl -u ipobot -f                  # 봇 로그
+journalctl -u ipobot-update -n 50        # 배포 로그
+sudo systemctl restart ipobot            # 재시작
+```
+
+서버에서 CLI(4절)를 돌릴 때는 환경변수를 내보내고 `.venv`의 파이썬을 쓴다.
+
+```sh
+cd ~/ipobot && set -a; . ./.env; set +a
+.venv/bin/python -m ipobot preview-digest
+```
+
+서버에는 `sqlite3` CLI가 없다. 이 문서의 SQL은 파이썬으로 실행한다. 쓰기 전에는 봇을 멈춘다.
+
+```sh
+sudo systemctl stop ipobot
+.venv/bin/python - <<'EOF'
+import os, sqlite3
+conn = sqlite3.connect(os.environ["DB_PATH"])
+print(conn.execute("SELECT ...").fetchall())   # 여기에 SQL
+conn.commit()
+EOF
+sudo systemctl start ipobot
+```
+
 ### 릴리스와 자동 배포
 
 서버는 GitHub의 **최신 릴리스**를 따라간다. `main`에 푸시만 해서는 배포되지 않는다.
@@ -126,9 +171,12 @@ set -a; . ./.env; set +a
 설치(최초 1회, 서버에서):
 
 ```sh
-sudo cp deploy/ipobot-update.service deploy/ipobot-update.timer /etc/systemd/system/
+git clone https://github.com/Gachi-Tuja/discord-bot.git ~/ipobot && cd ~/ipobot
+git checkout "$(git describe --tags --abbrev=0)"
+uv sync --frozen && cp .env.example .env    # .env 채우기
+sudo cp deploy/ipobot.service deploy/ipobot-update.service deploy/ipobot-update.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now ipobot-update.timer
+sudo systemctl enable --now ipobot.service ipobot-update.timer
 ```
 
 스크립트는 `ubuntu` 계정으로 돌며 재시작에 암호 없는 `sudo`가 필요하다. 저장소가 공개라 GitHub 인증은 필요 없다.
@@ -143,11 +191,7 @@ sudo systemctl enable --now ipobot-update.timer
 
 ### 휴장 override 추가
 
-`holidays` 규칙에 없는 임시 휴장이나, 규칙상 휴일이지만 실제 개장한 날은 DB에 직접 넣는다.
-
-```sh
-sqlite3 ./data/ipobot.sqlite3
-```
+`holidays` 규칙에 없는 임시 휴장이나, 규칙상 휴일이지만 실제 개장한 날은 DB에 직접 넣는다(서버에서는 「운영 서버」의 파이썬 방식으로 실행).
 
 ```sql
 -- 임시 휴장
@@ -290,4 +334,5 @@ DELETE FROM krx_closed_days WHERE trade_date = 'YYYY-MM-DD';
 
 - 테스트: `uv run pytest -q`. `tests/integration/test_end_to_end.py`가 실제 sqlite·서비스 배선과 fake KRX/DART/LLM/디스코드 채널로 재시작·크래시·장애 시나리오를 검증한다.
 - 설계 결정: `docs/adr/`.
-- 스키마: `src/ipobot/db/migrations/`(`0001_init.sql`, `0002_auth_delay_due_at.sql`). 시작 시 `PRAGMA user_version`보다 큰 번호를 순서대로 적용한다.
+- 스키마: `src/ipobot/db/migrations/NNNN_*.sql`. 시작 시 `PRAGMA user_version`보다 큰 번호를 순서대로 적용한다. 새 변경은 다음 번호의 파일로 추가하고 기존 파일은 고치지 않는다.
+- 배포: `main` 푸시만으로는 서버에 반영되지 않는다. 릴리스를 만들어야 한다(5절).
